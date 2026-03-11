@@ -2164,9 +2164,14 @@ app.post('/sync/locations', authenticateToken, async (req, res) => {
 // ===== CONTRACT SCRAPING FROM ORIGIN SYSTEM =====
 async function scrapeContracts() {
   try {
+    const now = new Date();
+    const mes = now.getMonth() + 1;
+    const ano = now.getFullYear();
+    const url = `${ORIGIN_BASE}/premium/ajax-dashboard-data?mes=${mes}&ano=${ano}`;
+
     let resp;
     try {
-      resp = await axios.get(`${ORIGIN_BASE}/premium/dashboard`, {
+      resp = await axios.get(url, {
         headers: { Cookie: originCookies },
         timeout: 30000,
         httpsAgent: originHttpsAgent,
@@ -2177,9 +2182,10 @@ async function scrapeContracts() {
       return [];
     }
 
-    if (!resp.data || resp.data.length < 2000 || resp.data.includes('action="/login/verifica"')) {
+    // If not JSON or not successful, re-login and retry
+    if (!resp.data || typeof resp.data !== 'object' || !resp.data.success) {
       await originLogin();
-      resp = await axios.get(`${ORIGIN_BASE}/premium/dashboard`, {
+      resp = await axios.get(url, {
         headers: { Cookie: originCookies },
         timeout: 30000,
         httpsAgent: originHttpsAgent,
@@ -2187,51 +2193,20 @@ async function scrapeContracts() {
       });
     }
 
-    const html = resp.data;
-    const contracts = [];
-
-    // Parse the "Contratos a Vencer" table rows
-    // Pattern: each row has advertiser, expiration date, value, vendor name, days
-    const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let match;
-    while ((match = rowPattern.exec(html)) !== null) {
-      const row = match[1];
-      const cells = [];
-      const cellPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-      let cellMatch;
-      while ((cellMatch = cellPattern.exec(row)) !== null) {
-        cells.push(cellMatch[1].replace(/<[^>]+>/g, '').trim());
-      }
-      // Expect: advertiser, expiration date (DD/MM/YYYY), value (R$ X.XXX), vendor, days
-      if (cells.length >= 4) {
-        const advertiser = cells[0];
-        const dateStr = cells[1];
-        const valueStr = cells[2];
-        const vendorName = cells[3];
-        
-        // Parse date (DD/MM/YYYY)
-        const dateParts = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-        if (!dateParts || !advertiser) continue;
-        
-        const expDate = `${dateParts[3]}-${dateParts[2]}-${dateParts[1]}`;
-        const value = parseFloat(valueStr.replace(/[R$\s.]/g, '').replace(',', '.')) || 0;
-        
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const expDateObj = new Date(expDate + 'T00:00:00');
-        const diffMs = expDateObj - today;
-        const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-        contracts.push({
-          advertiser,
-          expirationDate: expDate,
-          value,
-          vendorName: vendorName || 'N/A',
-          daysRemaining
-        });
-      }
+    if (!resp.data || !resp.data.contratos_vencer || !resp.data.contratos_vencer.lista) {
+      console.warn('No contratos_vencer data in response');
+      return [];
     }
-    
+
+    const lista = resp.data.contratos_vencer.lista;
+    const contracts = lista.map(item => ({
+      advertiser: item.cliente || '',
+      expirationDate: item.data_final || '',
+      value: parseFloat(item.valor_parcela) || 0,
+      vendorName: item.vendedor || 'N/A',
+      daysRemaining: parseInt(item.dias) || 0
+    })).filter(c => c.advertiser && c.expirationDate);
+
     console.log(`Contracts scraped: ${contracts.length} found`);
     return contracts;
   } catch (err) {
