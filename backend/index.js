@@ -928,6 +928,7 @@ app.get('/origin/monitor-form/:originId', authenticateToken, async (req, res) =>
     const resp = await axios.get(`${ORIGIN_BASE}/locais/adicionar-monitor/id/${originId}`, {
       headers: { Cookie: originCookies },
       timeout: 15000,
+      httpsAgent: originHttpsAgent,
       validateStatus: () => true
     });
     if (resp.status !== 200) return res.status(502).json({ error: 'Failed to fetch monitor form' });
@@ -1007,6 +1008,7 @@ app.post('/origin/monitor-save', authenticateToken, async (req, res) => {
       },
       timeout: 15000,
       maxRedirects: 5,
+      httpsAgent: originHttpsAgent,
       validateStatus: () => true
     });
 
@@ -1057,7 +1059,7 @@ app.post('/screens/:id/video/start', authenticateToken, async (req, res) => {
 
     const resp = await axios.post(`${ORIGIN_BASE}/sudp/vid_ativ.php`, 
       `id=${screen.originId}&ip=${ORIGIN_MONITOR_IP}`,
-      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, validateStatus: () => true }
+      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, httpsAgent: originHttpsAgent, validateStatus: () => true }
     );
     res.json({ success: true, data: resp.data });
   } catch (err) {
@@ -1073,7 +1075,7 @@ app.post('/screens/:id/video/frame', authenticateToken, async (req, res) => {
 
     const resp = await axios.post(`${ORIGIN_BASE}/sudp/vid_rem.php`,
       `id=${screen.originId}&ip=${ORIGIN_MONITOR_IP}`,
-      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, validateStatus: () => true }
+      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, httpsAgent: originHttpsAgent, validateStatus: () => true }
     );
 
     // vid_rem.php returns the image data URL directly (data:image/...) or "NY" if not ready
@@ -1095,7 +1097,7 @@ app.post('/screens/:id/video/stop', authenticateToken, async (req, res) => {
 
     await axios.post(`${ORIGIN_BASE}/sudp/vid_desativ.php`,
       `id=${screen.originId}&ip=${ORIGIN_MONITOR_IP}`,
-      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, validateStatus: () => true }
+      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, httpsAgent: originHttpsAgent, validateStatus: () => true }
     );
     res.json({ success: true });
   } catch (err) {
@@ -1117,7 +1119,7 @@ app.post('/screens/:id/command', authenticateToken, async (req, res) => {
 
     const resp = await axios.post(`${ORIGIN_BASE}/sudp/btn_rem.php`,
       `acao=${action}&id=${screen.originId}&ip=${ORIGIN_MONITOR_IP}`,
-      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, validateStatus: () => true }
+      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, httpsAgent: originHttpsAgent, validateStatus: () => true }
     );
     res.json({ success: true, data: resp.data });
   } catch (err) {
@@ -1622,7 +1624,7 @@ app.post('/screens/:id/auto-diagnose', authenticateToken, async (req, res) => {
     // Attempt remote reboot
     const resp = await axios.post(`${ORIGIN_BASE}/sudp/btn_rem.php`,
       `acao=reboot&id=${screen.originId}&ip=${ORIGIN_MONITOR_IP}`,
-      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, validateStatus: () => true }
+      { headers: { Cookie: originCookies, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000, httpsAgent: originHttpsAgent, validateStatus: () => true }
     );
 
     // Log the auto-diagnosis attempt
@@ -1688,10 +1690,12 @@ app.listen(port, () => console.log(`API listening on ${port}`));
 
 // === Periodic sync with original system (sistema.redeintermidia.com)
 // Scrapes the monitoring page to get real-time status of all monitors
+const https = require('https');
 const ORIGIN_BASE = process.env.ORIGIN_BASE || 'https://sistema.redeintermidia.com';
 const ORIGIN_USER = process.env.ORIGIN_USER || 'Intermidia';
 const ORIGIN_PASS = process.env.ORIGIN_PASS || 'Intermidia2025@';
 const SYNC_INTERVAL_MS = 120000; // 2 minutes
+const originHttpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 let originCookies = '';
 
@@ -1699,7 +1703,7 @@ async function originLogin() {
   try {
     // Step 1: GET login page to obtain PHPSESSID cookie
     const loginPage = await axios.get(`${ORIGIN_BASE}/login`, {
-      timeout: 15000, validateStatus: () => true, maxRedirects: 0
+      timeout: 15000, validateStatus: () => true, maxRedirects: 0, httpsAgent: originHttpsAgent
     });
     const initCookies = (loginPage.headers['set-cookie'] || []).map(c => c.split(';')[0]).join('; ');
     if (!initCookies) {
@@ -1714,6 +1718,7 @@ async function originLogin() {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: initCookies },
         maxRedirects: 0,
         timeout: 15000,
+        httpsAgent: originHttpsAgent,
         validateStatus: () => true
       }
     );
@@ -1821,6 +1826,7 @@ async function syncWithOrigin() {
         headers: { Cookie: originCookies },
         timeout: 20000,
         maxRedirects: 5,
+        httpsAgent: originHttpsAgent,
         validateStatus: () => true
       });
     } catch (err) {
@@ -1838,6 +1844,7 @@ async function syncWithOrigin() {
         headers: { Cookie: originCookies },
         timeout: 20000,
         maxRedirects: 5,
+        httpsAgent: originHttpsAgent,
         validateStatus: () => true
       });
     }
@@ -1914,6 +1921,7 @@ async function scrapeLocationMapping() {
     resp = await axios.get(`${ORIGIN_BASE}/locais/monitores`, {
       headers: { Cookie: originCookies },
       timeout: 30000,
+      httpsAgent: originHttpsAgent,
       validateStatus: () => true
     });
   } catch (err) {
@@ -1926,6 +1934,7 @@ async function scrapeLocationMapping() {
     resp = await axios.get(`${ORIGIN_BASE}/locais/monitores`, {
       headers: { Cookie: originCookies },
       timeout: 30000,
+      httpsAgent: originHttpsAgent,
       validateStatus: () => true
     });
   }
@@ -1982,6 +1991,7 @@ app.post('/sync/import', authenticateToken, requireAdmin, async (req, res) => {
     let resp = await axios.get(`${ORIGIN_BASE}/index/index3`, {
       headers: { Cookie: originCookies },
       timeout: 20000,
+      httpsAgent: originHttpsAgent,
       validateStatus: () => true
     });
 
@@ -1990,6 +2000,7 @@ app.post('/sync/import', authenticateToken, requireAdmin, async (req, res) => {
       resp = await axios.get(`${ORIGIN_BASE}/index/index3`, {
         headers: { Cookie: originCookies },
         timeout: 20000,
+        httpsAgent: originHttpsAgent,
         validateStatus: () => true
       });
     }
