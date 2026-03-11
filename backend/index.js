@@ -18,6 +18,8 @@ const AuditLog = require('./models/AuditLog');
 const Part = require('./models/Part');
 const ChecklistTemplate = require('./models/ChecklistTemplate');
 const NotificationConfig = require('./models/NotificationConfig');
+const Contract = require('./models/Contract');
+const Vendor = require('./models/Vendor');
 const { authenticateToken, requireAdmin, JWT_SECRET } = require('./middleware/auth');
 const backup = require('./config/backup');
 
@@ -1686,6 +1688,72 @@ app.get('/analytics/enhanced', authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ===== VENDORS CRUD (admin only) =====
+app.get('/vendors', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const vendors = await Vendor.findAll({ order: [['name', 'ASC']] });
+    res.json(vendors);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/vendors', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { name, phone, email } = req.body;
+    if (!name || !phone) return res.status(400).json({ error: 'Nome e telefone são obrigatórios' });
+    const vendor = await Vendor.create({ name, phone, email });
+    res.status(201).json(vendor);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.patch('/vendors/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const vendor = await Vendor.findByPk(req.params.id);
+    if (!vendor) return res.status(404).json({ error: 'Vendedor não encontrado' });
+    await vendor.update(req.body);
+    res.json(vendor);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.delete('/vendors/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const vendor = await Vendor.findByPk(req.params.id);
+    if (!vendor) return res.status(404).json({ error: 'Vendedor não encontrado' });
+    await vendor.destroy();
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== CONTRACTS =====
+app.get('/contracts', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const contracts = await Contract.findAll({ order: [['expirationDate', 'ASC']] });
+    res.json(contracts);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/contracts/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const contract = await Contract.findByPk(req.params.id);
+    if (!contract) return res.status(404).json({ error: 'Contrato não encontrado' });
+    await contract.destroy();
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Force notify vendor about a specific contract
+app.post('/contracts/:id/notify', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const contract = await Contract.findByPk(req.params.id);
+    if (!contract) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const vendor = contract.vendorId ? await Vendor.findByPk(contract.vendorId) : null;
+    if (!vendor) return res.status(400).json({ error: 'Contrato sem vendedor vinculado' });
+    const msg = `📋 *CONTRATO A VENCER*\n\nAnunciante: ${contract.advertiser}\nVencimento: ${new Date(contract.expirationDate).toLocaleDateString('pt-BR')}\nValor: R$ ${(contract.value || 0).toLocaleString('pt-BR')}\nDias restantes: ${contract.daysRemaining}\n\n⚠️ Entre em contato para renovação.`;
+    await sendNotification(msg, vendor.phone);
+    await contract.update({ notified: true, lastNotifiedAt: new Date() });
+    res.json({ success: true, message: `Notificação enviada para ${vendor.name} (${vendor.phone})` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.listen(port, () => console.log(`API listening on ${port}`));
 
 // Note: No local heartbeat interval — the origin system sync (every 2 min)
@@ -2092,3 +2160,176 @@ app.post('/sync/locations', authenticateToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ===== CONTRACT SCRAPING FROM ORIGIN SYSTEM =====
+async function scrapeContracts() {
+  try {
+    let resp;
+    try {
+      resp = await axios.get(`${ORIGIN_BASE}/premium/dashboard`, {
+        headers: { Cookie: originCookies },
+        timeout: 30000,
+        httpsAgent: originHttpsAgent,
+        validateStatus: () => true
+      });
+    } catch (err) {
+      console.warn('Contract fetch failed:', err.message);
+      return [];
+    }
+
+    if (!resp.data || resp.data.length < 2000 || resp.data.includes('action="/login/verifica"')) {
+      await originLogin();
+      resp = await axios.get(`${ORIGIN_BASE}/premium/dashboard`, {
+        headers: { Cookie: originCookies },
+        timeout: 30000,
+        httpsAgent: originHttpsAgent,
+        validateStatus: () => true
+      });
+    }
+
+    const html = resp.data;
+    const contracts = [];
+
+    // Parse the "Contratos a Vencer" table rows
+    // Pattern: each row has advertiser, expiration date, value, vendor name, days
+    const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let match;
+    while ((match = rowPattern.exec(html)) !== null) {
+      const row = match[1];
+      const cells = [];
+      const cellPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+      let cellMatch;
+      while ((cellMatch = cellPattern.exec(row)) !== null) {
+        cells.push(cellMatch[1].replace(/<[^>]+>/g, '').trim());
+      }
+      // Expect: advertiser, expiration date (DD/MM/YYYY), value (R$ X.XXX), vendor, days
+      if (cells.length >= 4) {
+        const advertiser = cells[0];
+        const dateStr = cells[1];
+        const valueStr = cells[2];
+        const vendorName = cells[3];
+        
+        // Parse date (DD/MM/YYYY)
+        const dateParts = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+        if (!dateParts || !advertiser) continue;
+        
+        const expDate = `${dateParts[3]}-${dateParts[2]}-${dateParts[1]}`;
+        const value = parseFloat(valueStr.replace(/[R$\s.]/g, '').replace(',', '.')) || 0;
+        
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const expDateObj = new Date(expDate + 'T00:00:00');
+        const diffMs = expDateObj - today;
+        const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+        contracts.push({
+          advertiser,
+          expirationDate: expDate,
+          value,
+          vendorName: vendorName || 'N/A',
+          daysRemaining
+        });
+      }
+    }
+    
+    console.log(`Contracts scraped: ${contracts.length} found`);
+    return contracts;
+  } catch (err) {
+    console.error('Contract scraping error:', err.message);
+    return [];
+  }
+}
+
+// Sync contracts endpoint
+app.post('/contracts/sync', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const scraped = await scrapeContracts();
+    if (!scraped.length) return res.status(400).json({ error: 'Nenhum contrato encontrado no sistema de origem' });
+
+    let created = 0, updated = 0;
+    const vendors = await Vendor.findAll();
+
+    for (const c of scraped) {
+      // Match vendor by name (case-insensitive partial match)
+      const matchedVendor = vendors.find(v => 
+        v.name.toLowerCase().includes(c.vendorName.toLowerCase()) ||
+        c.vendorName.toLowerCase().includes(v.name.toLowerCase())
+      );
+
+      let contract = await Contract.findOne({ 
+        where: { advertiser: c.advertiser, expirationDate: c.expirationDate }
+      });
+
+      if (contract) {
+        await contract.update({
+          value: c.value,
+          vendorName: c.vendorName,
+          vendorId: matchedVendor ? matchedVendor.id : contract.vendorId,
+          daysRemaining: c.daysRemaining
+        });
+        updated++;
+      } else {
+        await Contract.create({
+          advertiser: c.advertiser,
+          expirationDate: c.expirationDate,
+          value: c.value,
+          vendorName: c.vendorName,
+          vendorId: matchedVendor ? matchedVendor.id : null,
+          daysRemaining: c.daysRemaining
+        });
+        created++;
+      }
+    }
+
+    res.json({ success: true, created, updated, total: scraped.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== AUTO-NOTIFY CONTRACTS EXPIRING WITHIN 15 DAYS =====
+async function checkExpiringContracts() {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const contracts = await Contract.findAll();
+    const vendors = await Vendor.findAll({ where: { active: true } });
+    
+    let notified = 0;
+    for (const contract of contracts) {
+      const expDate = new Date(contract.expirationDate + 'T00:00:00');
+      const diffMs = expDate - today;
+      const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      
+      // Update days remaining
+      if (contract.daysRemaining !== daysRemaining) {
+        await contract.update({ daysRemaining });
+      }
+
+      // Only notify if within 15 days and not already notified today
+      if (daysRemaining > 0 && daysRemaining <= 15) {
+        const alreadyNotifiedToday = contract.lastNotifiedAt && 
+          new Date(contract.lastNotifiedAt).toDateString() === today.toDateString();
+        
+        if (!alreadyNotifiedToday) {
+          const vendor = contract.vendorId ? vendors.find(v => v.id === contract.vendorId) : null;
+          if (vendor) {
+            const urgency = daysRemaining <= 5 ? '🔴 URGENTE' : daysRemaining <= 10 ? '🟡 ATENÇÃO' : '🟢 AVISO';
+            const msg = `📋 *CONTRATO A VENCER* ${urgency}\n\nAnunciante: ${contract.advertiser}\nVencimento: ${new Date(contract.expirationDate).toLocaleDateString('pt-BR')}\nValor: R$ ${(contract.value || 0).toLocaleString('pt-BR')}\nDias restantes: ${daysRemaining}\n\n⚠️ Entre em contato para renovação.`;
+            await sendNotification(msg, vendor.phone);
+            await contract.update({ notified: true, lastNotifiedAt: new Date() });
+            notified++;
+            console.log(`Contract notification sent: ${contract.advertiser} -> ${vendor.name} (${daysRemaining} days)`);
+          }
+        }
+      }
+    }
+    if (notified > 0) console.log(`Contract check: ${notified} notifications sent`);
+  } catch (err) {
+    console.error('Contract check error:', err.message);
+  }
+}
+
+// Check expiring contracts every 6 hours
+setInterval(checkExpiringContracts, 6 * 60 * 60 * 1000);
+// Also run on startup (delayed)
+setTimeout(checkExpiringContracts, 15000);

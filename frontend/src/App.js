@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { FiMonitor, FiCheckCircle, FiAlertCircle, FiMinusCircle, FiPlus, FiSearch, FiClock, FiLogOut, FiUserPlus, FiPhone, FiTrash2, FiChevronDown, FiChevronUp, FiKey, FiBarChart2, FiFileText, FiPrinter, FiDatabase, FiDownload, FiSettings, FiMenu, FiRefreshCw, FiEdit, FiEye, FiEyeOff, FiStar, FiCalendar, FiMapPin, FiPackage, FiTag, FiUser, FiTool, FiChevronLeft, FiChevronRight, FiMoon, FiSun, FiClipboard, FiZap, FiTrendingUp, FiActivity, FiBell, FiSend, FiToggleLeft, FiToggleRight } from 'react-icons/fi';
+import { FiMonitor, FiCheckCircle, FiAlertCircle, FiMinusCircle, FiPlus, FiSearch, FiClock, FiLogOut, FiUserPlus, FiPhone, FiTrash2, FiChevronDown, FiChevronUp, FiKey, FiBarChart2, FiFileText, FiPrinter, FiDatabase, FiDownload, FiSettings, FiMenu, FiRefreshCw, FiEdit, FiEye, FiEyeOff, FiStar, FiCalendar, FiMapPin, FiPackage, FiTag, FiUser, FiTool, FiChevronLeft, FiChevronRight, FiMoon, FiSun, FiClipboard, FiZap, FiTrendingUp, FiActivity, FiBell, FiSend, FiToggleLeft, FiToggleRight, FiDollarSign, FiUserCheck } from 'react-icons/fi';
 import logo from './assets/logo.png';
 import Analytics from './Analytics';
 import NotificationCenter from './NotificationCenter';
@@ -117,6 +117,16 @@ function App() {
   const [ticketStats, setTicketStats] = useState(null);
   const [notifConfig, setNotifConfig] = useState(null);
   const [notifTestPhone, setNotifTestPhone] = useState('');
+
+  // Contracts & Vendors
+  const [contracts, setContracts] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [contractsSyncing, setContractsSyncing] = useState(false);
+  const [showVendorModal, setShowVendorModal] = useState(false);
+  const [vendorForm, setVendorForm] = useState({ name: '', phone: '', email: '' });
+  const [editingVendor, setEditingVendor] = useState(null);
+  const [contractsTab, setContractsTab] = useState('contracts');
 
   const userMenuRef = useRef(null);
   const reportsLoadedRef = useRef(false);
@@ -1338,6 +1348,99 @@ function App() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  // Contracts & Vendors functions
+  const fetchContracts = async () => {
+    setContractsLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/contracts`, authConfig);
+      setContracts(res.data);
+    } catch (err) {
+      console.error('Error fetching contracts:', err);
+    } finally {
+      setContractsLoading(false);
+    }
+  };
+
+  const fetchVendors = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/vendors`, authConfig);
+      setVendors(res.data);
+    } catch (err) {
+      console.error('Error fetching vendors:', err);
+    }
+  };
+
+  const syncContracts = async () => {
+    setContractsSyncing(true);
+    try {
+      const res = await axios.post(`${API_BASE}/contracts/sync`, {}, authConfig);
+      showAlert(`Contratos sincronizados! ${res.data.synced || 0} contratos encontrados.`, 'success');
+      fetchContracts();
+    } catch (err) {
+      showAlert('Erro ao sincronizar contratos: ' + (err.response?.data?.error || err.message), 'error');
+    } finally {
+      setContractsSyncing(false);
+    }
+  };
+
+  const notifyContract = async (contractId) => {
+    try {
+      const res = await axios.post(`${API_BASE}/contracts/${contractId}/notify`, {}, authConfig);
+      showAlert(res.data.message || 'Notificação enviada!', 'success');
+      fetchContracts();
+    } catch (err) {
+      showAlert('Erro ao notificar: ' + (err.response?.data?.error || err.message), 'error');
+    }
+  };
+
+  const deleteContract = async (contractId) => {
+    if (!window.confirm('Remover este contrato?')) return;
+    try {
+      await axios.delete(`${API_BASE}/contracts/${contractId}`, authConfig);
+      showAlert('Contrato removido!', 'success');
+      fetchContracts();
+    } catch (err) {
+      showAlert('Erro ao remover contrato', 'error');
+    }
+  };
+
+  const saveVendor = async () => {
+    if (!vendorForm.name || !vendorForm.phone) return showAlert('Nome e telefone são obrigatórios', 'error');
+    try {
+      if (editingVendor) {
+        await axios.patch(`${API_BASE}/vendors/${editingVendor.id}`, vendorForm, authConfig);
+        showAlert('Vendedor atualizado!', 'success');
+      } else {
+        await axios.post(`${API_BASE}/vendors`, vendorForm, authConfig);
+        showAlert('Vendedor cadastrado!', 'success');
+      }
+      setShowVendorModal(false);
+      setVendorForm({ name: '', phone: '', email: '' });
+      setEditingVendor(null);
+      fetchVendors();
+    } catch (err) {
+      showAlert('Erro ao salvar vendedor: ' + (err.response?.data?.error || err.message), 'error');
+    }
+  };
+
+  const deleteVendor = async (vendorId) => {
+    if (!window.confirm('Remover este vendedor?')) return;
+    try {
+      await axios.delete(`${API_BASE}/vendors/${vendorId}`, authConfig);
+      showAlert('Vendedor removido!', 'success');
+      fetchVendors();
+    } catch (err) {
+      showAlert('Erro ao remover vendedor', 'error');
+    }
+  };
+
+  const getUrgencyStyle = (days) => {
+    if (days <= 5) return { color: '#DC3545', bg: '#FFF0F1', icon: '🔴', label: 'Crítico' };
+    if (days <= 10) return { color: '#E9A034', bg: '#FFF8ED', icon: '🟡', label: 'Atenção' };
+    if (days <= 15) return { color: '#28A745', bg: '#EDFBF0', icon: '🟢', label: 'Próximo' };
+    return { color: '#6c757d', bg: '#f8f9fa', icon: '⚪', label: 'OK' };
+  };
+
   // Origin sync functions
   const [importLoading, setImportLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
@@ -1744,6 +1847,14 @@ function App() {
           </button>
 
           <div className="sidebar-section-label">Sistema</div>
+          {currentUser?.role === 'admin' && (
+            <button className={`sidebar-item ${activePage === 'contracts' ? 'active' : ''}`} onClick={() => { setActivePage('contracts'); fetchContracts(); fetchVendors(); }}>
+              <FiDollarSign size={18} /> Contratos
+              {contracts.filter(c => c.daysRemaining <= 15).length > 0 && (
+                <span className="nav-badge warning">{contracts.filter(c => c.daysRemaining <= 15).length}</span>
+              )}
+            </button>
+          )}
           {currentUser?.role === 'admin' && (
             <button className={`sidebar-item ${activePage === 'backups' ? 'active' : ''}`} onClick={() => { setActivePage('backups'); fetchBackups(); }}>
               <FiDatabase size={18} /> Backups
@@ -2986,6 +3097,181 @@ function App() {
           </>
         ) : (
           <div className="empty-state"><FiBell size={36} /><p>Carregando configuração...</p></div>
+        )}
+      </div>
+
+      ) : activePage === 'contracts' ? (
+      <div className="contracts-page">
+        <div className="contracts-header">
+          <div className="contracts-title">
+            <h3><FiDollarSign size={18} /> Contratos a Vencer</h3>
+            <p>Gerencie contratos e vendedores — notificações automáticas via WhatsApp.</p>
+          </div>
+          <div className="contracts-actions">
+            <button className="btn-primary" onClick={syncContracts} disabled={contractsSyncing}>
+              <FiRefreshCw size={14} className={contractsSyncing ? 'spin' : ''} /> {contractsSyncing ? 'Sincronizando...' : 'Sincronizar Contratos'}
+            </button>
+          </div>
+        </div>
+
+        <div className="contracts-tabs">
+          <button className={`contracts-tab ${contractsTab === 'contracts' ? 'active' : ''}`} onClick={() => setContractsTab('contracts')}>
+            <FiFileText size={14} /> Contratos ({contracts.length})
+          </button>
+          <button className={`contracts-tab ${contractsTab === 'vendors' ? 'active' : ''}`} onClick={() => setContractsTab('vendors')}>
+            <FiUserCheck size={14} /> Vendedores ({vendors.length})
+          </button>
+        </div>
+
+        {contractsTab === 'contracts' ? (
+          <>
+            {contracts.filter(c => c.daysRemaining <= 15).length > 0 && (
+              <div className="contracts-alert-banner">
+                <FiAlertCircle size={16} />
+                <span><strong>{contracts.filter(c => c.daysRemaining <= 15).length}</strong> contrato(s) vencendo nos próximos 15 dias!</span>
+              </div>
+            )}
+
+            {contractsLoading ? (
+              <div className="empty-state"><FiClock size={36} /><p>Carregando contratos...</p></div>
+            ) : contracts.length === 0 ? (
+              <div className="empty-state">
+                <FiDollarSign size={36} />
+                <p>Nenhum contrato encontrado.</p>
+                <p style={{fontSize: '12px', color: 'var(--text-muted)'}}>Clique em "Sincronizar Contratos" para importar do sistema de origem.</p>
+              </div>
+            ) : (
+              <div className="contracts-table-wrapper">
+                <table className="contracts-table">
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Anunciante</th>
+                      <th>Vencimento</th>
+                      <th>Valor</th>
+                      <th>Vendedor</th>
+                      <th>Dias</th>
+                      <th>Notificado</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...contracts].sort((a, b) => a.daysRemaining - b.daysRemaining).map(c => {
+                      const urgency = getUrgencyStyle(c.daysRemaining);
+                      return (
+                        <tr key={c.id} className={c.daysRemaining <= 15 ? 'contract-urgent' : ''}>
+                          <td>
+                            <span className="contract-urgency-badge" style={{background: urgency.bg, color: urgency.color}}>
+                              {urgency.icon} {urgency.label}
+                            </span>
+                          </td>
+                          <td className="contract-advertiser">{c.advertiser}</td>
+                          <td>{c.expirationDate ? new Date(c.expirationDate + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}</td>
+                          <td className="contract-value">{c.value ? `R$ ${Number(c.value).toLocaleString('pt-BR', {minimumFractionDigits: 2})}` : '-'}</td>
+                          <td>
+                            {c.vendorName || '-'}
+                            {c.Vendor && <span className="contract-vendor-linked" title="Vendedor vinculado"><FiUserCheck size={12} /></span>}
+                          </td>
+                          <td>
+                            <span className="contract-days" style={{color: urgency.color, fontWeight: 700}}>
+                              {c.daysRemaining} dias
+                            </span>
+                          </td>
+                          <td>
+                            {c.notified ? (
+                              <span className="contract-notified" title={c.lastNotifiedAt ? `Último: ${new Date(c.lastNotifiedAt).toLocaleString('pt-BR')}` : ''}>
+                                <FiCheckCircle size={14} color="#28A745" /> Sim
+                              </span>
+                            ) : (
+                              <span style={{color: 'var(--text-muted)'}}>Não</span>
+                            )}
+                          </td>
+                          <td className="contract-actions-cell">
+                            {c.Vendor && c.daysRemaining <= 15 && (
+                              <button className="btn-icon" title="Enviar WhatsApp" onClick={() => notifyContract(c.id)}>
+                                <FiSend size={14} />
+                              </button>
+                            )}
+                            <button className="btn-icon danger" title="Remover" onClick={() => deleteContract(c.id)}>
+                              <FiTrash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="vendors-header">
+              <button className="btn-primary" onClick={() => { setVendorForm({ name: '', phone: '', email: '' }); setEditingVendor(null); setShowVendorModal(true); }}>
+                <FiPlus size={14} /> Novo Vendedor
+              </button>
+            </div>
+
+            {vendors.length === 0 ? (
+              <div className="empty-state">
+                <FiUserCheck size={36} />
+                <p>Nenhum vendedor cadastrado.</p>
+                <p style={{fontSize: '12px', color: 'var(--text-muted)'}}>Cadastre vendedores para receber notificações automáticas de contratos a vencer.</p>
+              </div>
+            ) : (
+              <div className="vendors-grid">
+                {vendors.map(v => (
+                  <div key={v.id} className="vendor-card">
+                    <div className="vendor-card-header">
+                      <div className="vendor-avatar"><FiUser size={20} /></div>
+                      <div className="vendor-info">
+                        <h4>{v.name}</h4>
+                        {v.email && <span className="vendor-email">{v.email}</span>}
+                      </div>
+                      <span className={`vendor-status ${v.active ? 'active' : 'inactive'}`}>
+                        {v.active ? 'Ativo' : 'Inativo'}
+                      </span>
+                    </div>
+                    <div className="vendor-card-body">
+                      <div className="vendor-phone"><FiPhone size={13} /> {v.phone}</div>
+                    </div>
+                    <div className="vendor-card-actions">
+                      <button className="btn-secondary btn-sm" onClick={() => { setVendorForm({ name: v.name, phone: v.phone, email: v.email || '' }); setEditingVendor(v); setShowVendorModal(true); }}>
+                        <FiEdit size={13} /> Editar
+                      </button>
+                      <button className="btn-secondary btn-sm danger-text" onClick={() => deleteVendor(v.id)}>
+                        <FiTrash2 size={13} /> Remover
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Vendor Modal */}
+        {showVendorModal && (
+          <div className="modal-overlay" onClick={() => setShowVendorModal(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>{editingVendor ? 'Editar Vendedor' : 'Novo Vendedor'}</h2>
+                <button className="modal-close" onClick={() => setShowVendorModal(false)}>×</button>
+              </div>
+              <div className="modal-body">
+                <label>Nome *</label>
+                <input type="text" placeholder="Nome do vendedor" value={vendorForm.name} onChange={(e) => setVendorForm({...vendorForm, name: e.target.value})} />
+                <label>Telefone * <span style={{fontSize: '11px', color: 'var(--text-muted)'}}>(formato: 43988005719)</span></label>
+                <input type="text" placeholder="43988005719" value={vendorForm.phone} onChange={(e) => setVendorForm({...vendorForm, phone: e.target.value})} />
+                <label>Email</label>
+                <input type="email" placeholder="email@exemplo.com" value={vendorForm.email} onChange={(e) => setVendorForm({...vendorForm, email: e.target.value})} />
+              </div>
+              <div className="modal-footer">
+                <button onClick={() => setShowVendorModal(false)} className="btn-secondary">Cancelar</button>
+                <button onClick={saveVendor} className="btn-primary">{editingVendor ? 'Salvar' : 'Cadastrar'}</button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
