@@ -3187,7 +3187,7 @@ function App() {
                             )}
                           </td>
                           <td className="contract-actions-cell">
-                            {c.Vendor && c.daysRemaining <= 15 && (
+                            {(c.Vendor || c.vendorId) && c.daysRemaining <= 15 && (
                               <button className="btn-icon" title="Enviar WhatsApp" onClick={() => notifyContract(c.id)}>
                                 <FiSend size={14} />
                               </button>

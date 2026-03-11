@@ -28,6 +28,8 @@ Ticket.belongsTo(Screen, { foreignKey: 'screenId' });
 Screen.hasMany(Ticket, { foreignKey: 'screenId' });
 Schedule.belongsTo(Screen, { foreignKey: 'screenId' });
 Schedule.belongsTo(Ticket, { foreignKey: 'ticketId' });
+Contract.belongsTo(Vendor, { foreignKey: 'vendorId' });
+Vendor.hasMany(Contract, { foreignKey: 'vendorId' });
 
 const app = express();
 app.use(cors());
@@ -1726,7 +1728,7 @@ app.delete('/vendors/:id', authenticateToken, requireAdmin, async (req, res) => 
 // ===== CONTRACTS =====
 app.get('/contracts', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const contracts = await Contract.findAll({ order: [['expirationDate', 'ASC']] });
+    const contracts = await Contract.findAll({ include: [{ model: Vendor, required: false }], order: [['expirationDate', 'ASC']] });
     res.json(contracts);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
