@@ -159,12 +159,17 @@ async function sendNotification(message, specificPhone) {
     }
     for (const phone of phones) {
       try {
+        // Format phone: ensure country code (55 for Brazil)
+        let cleanPhone = phone.replace(/\D/g, '');
+        if (cleanPhone.length <= 11) cleanPhone = '55' + cleanPhone;
+
+        // Evolution API format
         await axios.post(config.whatsappApiUrl, {
-          phone: phone.replace(/\D/g, ''),
-          message: message
-        }, { headers: { 'Authorization': config.whatsappApiKey, 'Content-Type': 'application/json' }, timeout: 10000 });
+          number: cleanPhone,
+          text: message
+        }, { headers: { 'apikey': config.whatsappApiKey, 'Content-Type': 'application/json' }, timeout: 10000 });
         console.log(`Notification sent to ${phone}`);
-      } catch (e) { console.error(`Failed to send to ${phone}:`, e.message); }
+      } catch (e) { console.error(`Failed to send to ${phone}:`, e.response?.data || e.message); }
     }
   } catch (e) { console.error('Notification error:', e.message); }
 }
