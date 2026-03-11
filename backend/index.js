@@ -2220,14 +2220,23 @@ async function scrapeContracts() {
 // Sync contracts endpoint
 app.post('/contracts/sync', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const synced = await syncContractsFromOrigin();
+    if (!synced) return res.status(400).json({ error: 'Nenhum contrato encontrado no sistema de origem' });
+    const contracts = await Contract.findAll();
+    res.json({ success: true, synced, total: contracts.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== AUTO-SYNC & NOTIFY CONTRACTS =====
+async function syncContractsFromOrigin() {
+  try {
     const scraped = await scrapeContracts();
-    if (!scraped.length) return res.status(400).json({ error: 'Nenhum contrato encontrado no sistema de origem' });
+    if (!scraped.length) { console.log('Contract auto-sync: no contracts found'); return 0; }
 
     let created = 0, updated = 0;
     const vendors = await Vendor.findAll();
 
     for (const c of scraped) {
-      // Match vendor by name (case-insensitive partial match)
       const matchedVendor = vendors.find(v => 
         v.name.toLowerCase().includes(c.vendorName.toLowerCase()) ||
         c.vendorName.toLowerCase().includes(v.name.toLowerCase())
@@ -2239,30 +2248,29 @@ app.post('/contracts/sync', authenticateToken, requireAdmin, async (req, res) =>
 
       if (contract) {
         await contract.update({
-          value: c.value,
-          vendorName: c.vendorName,
+          value: c.value, vendorName: c.vendorName,
           vendorId: matchedVendor ? matchedVendor.id : contract.vendorId,
           daysRemaining: c.daysRemaining
         });
         updated++;
       } else {
         await Contract.create({
-          advertiser: c.advertiser,
-          expirationDate: c.expirationDate,
-          value: c.value,
-          vendorName: c.vendorName,
+          advertiser: c.advertiser, expirationDate: c.expirationDate,
+          value: c.value, vendorName: c.vendorName,
           vendorId: matchedVendor ? matchedVendor.id : null,
           daysRemaining: c.daysRemaining
         });
         created++;
       }
     }
+    console.log(`Contract auto-sync: ${scraped.length} total, ${created} created, ${updated} updated`);
+    return scraped.length;
+  } catch (err) {
+    console.error('Contract auto-sync error:', err.message);
+    return 0;
+  }
+}
 
-    res.json({ success: true, created, updated, total: scraped.length });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ===== AUTO-NOTIFY CONTRACTS EXPIRING WITHIN 15 DAYS =====
 async function checkExpiringContracts() {
   try {
     const today = new Date();
@@ -2306,7 +2314,10 @@ async function checkExpiringContracts() {
   }
 }
 
-// Check expiring contracts every 6 hours
-setInterval(checkExpiringContracts, 6 * 60 * 60 * 1000);
-// Also run on startup (delayed)
-setTimeout(checkExpiringContracts, 15000);
+// Auto-sync contracts and check notifications every 6 hours
+async function autoSyncAndNotify() {
+  await syncContractsFromOrigin();
+  await checkExpiringContracts();
+}
+setInterval(autoSyncAndNotify, 6 * 60 * 60 * 1000);
+setTimeout(autoSyncAndNotify, 15000);
