@@ -2234,6 +2234,12 @@ const originHttpsAgent = new https.Agent({ rejectUnauthorized: false });
 let originCookies = '';
 let loopSyncInProgress = false;
 let loopSyncLastRunAt = null;
+const ORIGIN_SCRAPE_EXCLUDED_IDS = new Set([318]);
+
+function isOriginScrapeExcluded(originId) {
+  const id = parseInt(originId, 10);
+  return Number.isInteger(id) && ORIGIN_SCRAPE_EXCLUDED_IDS.has(id);
+}
 
 async function originLogin() {
   try {
@@ -2350,7 +2356,7 @@ function parseMonitorPage(html) {
 
   parseSection(onlineHtml, true);
   parseSection(offlineHtml, false);
-  return monitors;
+  return monitors.filter((mon) => !isOriginScrapeExcluded(mon.originId));
 }
 
 async function syncWithOrigin() {
@@ -2529,6 +2535,7 @@ async function scrapeLocationMapping() {
     let tm;
     while ((tm = trPattern.exec(section)) !== null) {
       const monId = parseInt(tm[1]);
+      if (!Number.isInteger(monId) || isOriginScrapeExcluded(monId)) continue;
       const rowStart = tm.index;
       const rowEnd = section.indexOf('</tr>', rowStart);
       const row = section.substring(rowStart, rowEnd > 0 ? rowEnd : rowStart + 2000);
@@ -2687,7 +2694,7 @@ async function scrapePremiumMonitorIds() {
     let m;
     while ((m = pattern.exec(html)) !== null) {
       const id = parseInt(m[1], 10);
-      if (Number.isInteger(id) && id > 0) ids.add(id);
+      if (Number.isInteger(id) && id > 0 && !isOriginScrapeExcluded(id)) ids.add(id);
     }
   }
 
@@ -2695,6 +2702,7 @@ async function scrapePremiumMonitorIds() {
 }
 
 async function fetchOriginMonitorCycle(originId) {
+  if (isOriginScrapeExcluded(originId)) return null;
   let resp;
   try {
     resp = await axios.get(`${ORIGIN_BASE}/locais/adicionar-monitor/id/${originId}`, {
@@ -2781,7 +2789,7 @@ async function syncLoopAuditsFromOrigin(reason = 'manual') {
     const locationMap = await scrapeLocationMapping() || {};
     const premiumIds = await scrapePremiumMonitorIds();
     const fallbackIds = Object.keys(locationMap).map((id) => parseInt(id, 10)).filter(Number.isInteger);
-    const ids = [...new Set([...premiumIds, ...fallbackIds])];
+    const ids = [...new Set([...premiumIds, ...fallbackIds])].filter((id) => !isOriginScrapeExcluded(id));
 
     if (!ids.length) {
       return { success: false, message: 'Nenhum monitor encontrado no scraping de loop' };
@@ -2849,7 +2857,7 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
   try {
     const risk = String(req.query.risk || 'all').toLowerCase();
     const limit = Math.min(parseInt(req.query.limit || '300', 10) || 300, 1000);
-    const where = {};
+    const where = { originId: { [Op.notIn]: [...ORIGIN_SCRAPE_EXCLUDED_IDS] } };
     if (['critical', 'high', 'medium', 'low', 'unknown'].includes(risk)) {
       where.riskLevel = risk;
     }
@@ -2860,7 +2868,10 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
       limit
     });
 
-    const all = await LoopAudit.findAll({ attributes: ['riskLevel', 'loopSeconds', 'availableSlots10', 'availableSlots15'] });
+    const all = await LoopAudit.findAll({
+      where: { originId: { [Op.notIn]: [...ORIGIN_SCRAPE_EXCLUDED_IDS] } },
+      attributes: ['riskLevel', 'loopSeconds', 'availableSlots10', 'availableSlots15']
+    });
     let persistedLastSyncAt = loopSyncLastRunAt;
     if (!persistedLastSyncAt) {
       const latest = await LoopAudit.findOne({
@@ -2940,6 +2951,7 @@ app.post('/sync/import', authenticateToken, requireAdmin, async (req, res) => {
     const locationsList = new Set(); // track unique locations for frontend
 
     for (const mon of monitors) {
+      if (isOriginScrapeExcluded(mon.originId)) continue;
       const locInfo = locationMap[mon.originId];
       const location = locInfo ? locInfo.location : '';
       const address = locInfo ? locInfo.city : '';
@@ -2994,6 +3006,7 @@ app.post('/sync/locations', authenticateToken, async (req, res) => {
 
     for (const [monIdStr, locInfo] of Object.entries(locationMap)) {
       const monId = parseInt(monIdStr);
+      if (isOriginScrapeExcluded(monId)) continue;
       const screen = await Screen.findOne({ where: { originId: monId } });
       if (screen) {
         const updates = {};

@@ -2022,6 +2022,7 @@ function App() {
         groupedMap.set(groupKey, {
           ...row,
           location: locationLabel,
+          city: String(row.city || '').trim() || 'Sem cidade',
           monitorCount: 1,
           originIds: [row.originId],
           monitorNames: [row.screenName || `Monitor ${row.originId}`]
@@ -2038,7 +2039,27 @@ function App() {
       group.remainingSeconds = Math.max(group.remainingSeconds || 0, row.remainingSeconds || 0);
     });
 
-    return Array.from(groupedMap.values());
+    return Array.from(groupedMap.values()).sort((a, b) => {
+      const cityCmp = String(a.city || '').localeCompare(String(b.city || ''), 'pt-BR');
+      if (cityCmp !== 0) return cityCmp;
+      return (b.riskScore || 0) - (a.riskScore || 0);
+    });
+  })();
+
+  const groupedLoopItemsWithCityHeaders = (() => {
+    const rows = [];
+    let lastCity = null;
+
+    groupedLoopItems.slice(0, 40).forEach((row) => {
+      const cityLabel = row.city || 'Sem cidade';
+      if (cityLabel !== lastCity) {
+        rows.push({ isCityHeader: true, city: cityLabel, key: `city-${cityLabel}` });
+        lastCity = cityLabel;
+      }
+      rows.push({ ...row, isCityHeader: false, key: `row-${row.location}-${row.loopSeconds}-${row.originIds.join('-')}` });
+    });
+
+    return rows;
   })();
 
   if (!authToken) {
@@ -3598,7 +3619,6 @@ function App() {
                   <thead>
                     <tr>
                       <th>Prioridade</th>
-                      <th>Monitor(es)</th>
                       <th>Local</th>
                       <th>Loop Atual</th>
                       <th>Tempo Livre</th>
@@ -3608,39 +3628,52 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {groupedLoopItems.slice(0, 40).map((row, idx) => (
-                      <tr key={`${row.location}-${row.loopSeconds}-${idx}`}>
-                        <td>#{idx + 1}</td>
-                        <td>
-                          <strong>
-                            {row.monitorCount > 1
-                              ? `${row.monitorCount} telas agrupadas`
-                              : (row.screenName || `Monitor ${row.originId}`)}
-                          </strong>
-                          <div className="loop-origin-id">
-                            IDs origem: {row.originIds.join(', ')}
-                          </div>
-                        </td>
-                        <td>{row.location || '-'}</td>
-                        <td>{formatSecondsClock(row.loopSeconds)}</td>
-                        <td>
-                          {Number.isFinite(row.remainingSeconds)
-                            ? `${formatSecondsClock(row.remainingSeconds)} livre${row.remainingSeconds < 60 ? ' (< 1 min)' : ''}`
-                            : '-'}
-                        </td>
-                        <td>
-                          <span className={`loop-risk-badge ${row.riskLevel || 'unknown'}`}>
-                            {row.riskLevel || 'unknown'}
-                          </span>
-                        </td>
-                        <td>{row.availableSlots10 ?? 0}</td>
-                        <td>{row.availableSlots15 ?? 0}</td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      let rank = 0;
+                      return groupedLoopItemsWithCityHeaders.map((row) => {
+                      if (row.isCityHeader) {
+                        return (
+                          <tr key={row.key}>
+                            <td colSpan={7} style={{ fontWeight: 700, background: '#f8fafc' }}>
+                              Cidade: {row.city}
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      rank += 1;
+
+                      return (
+                        <tr key={row.key}>
+                          <td>#{rank}</td>
+                          <td>
+                            <strong>{row.location || '-'}</strong>
+                            <div className="loop-origin-id">
+                              IDs: {row.originIds.join(', ')}
+                              {row.monitorCount > 1 ? ` • ${row.monitorCount} telas` : ''}
+                            </div>
+                          </td>
+                          <td>{formatSecondsClock(row.loopSeconds)}</td>
+                          <td>
+                            {Number.isFinite(row.remainingSeconds)
+                              ? `${formatSecondsClock(row.remainingSeconds)} livre${row.remainingSeconds < 60 ? ' (< 1 min)' : ''}`
+                              : '-'}
+                          </td>
+                          <td>
+                            <span className={`loop-risk-badge ${row.riskLevel || 'unknown'}`}>
+                              {row.riskLevel || 'unknown'}
+                            </span>
+                          </td>
+                          <td>{row.availableSlots10 ?? 0}</td>
+                          <td>{row.availableSlots15 ?? 0}</td>
+                        </tr>
+                      );
+                    });
+                    })()}
                   </tbody>
                 </table>
                 <small className="text-muted">
-                  Exibição agrupada por local + loop (monitores com mesmo loop no mesmo local viram uma linha). Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {formatSecondsClock(loopAuditData.targetSeconds || 180)}.
+                  Exibição agrupada por cidade e por local + loop (mesmo local com mesmo loop vira uma linha). Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {formatSecondsClock(loopAuditData.targetSeconds || 180)}.
                   {loopAuditData.lastSyncAt ? ` Última sincronização: ${new Date(loopAuditData.lastSyncAt).toLocaleString('pt-BR')}.` : ''}
                 </small>
               </div>
