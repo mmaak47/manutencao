@@ -2697,6 +2697,50 @@
 .sla-table th { text-align: left; padding: 8px; border-bottom: 2px solid var(--border); font-size: 0.78rem; text-transform: uppercase; color: var(--text-secondary); }
 .sla-table td { padding: 8px; border-bottom: 1px solid var(--border); }
 
+/* Loop Audit Table */
+.loop-table {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  overflow-x: auto;
+}
+.loop-table table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.loop-table th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 2px solid var(--border);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.loop-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.loop-origin-id {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.loop-risk-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.loop-risk-badge.critical { background: #fee2e2; color: #b91c1c; }
+.loop-risk-badge.high { background: #fef3c7; color: #b45309; }
+.loop-risk-badge.medium { background: #ffedd5; color: #c2410c; }
+.loop-risk-badge.low { background: #dcfce7; color: #166534; }
+.loop-risk-badge.unknown { background: #e2e8f0; color: #475569; }
+
 /* Empty State */
 .empty-state {
   display: flex;

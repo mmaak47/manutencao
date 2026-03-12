@@ -22,6 +22,7 @@ const Contract = require('./models/Contract');
 const Vendor = require('./models/Vendor');
 const TelemetrySnapshot = require('./models/TelemetrySnapshot');
 const TechRegistration = require('./models/TechRegistration');
+const LoopAudit = require('./models/LoopAudit');
 const { authenticateToken, requireAdmin, JWT_SECRET } = require('./middleware/auth');
 const backup = require('./config/backup');
 
@@ -2226,9 +2227,13 @@ const ORIGIN_BASE = process.env.ORIGIN_BASE || 'https://sistema.redeintermidia.c
 const ORIGIN_USER = process.env.ORIGIN_USER || 'Intermidia';
 const ORIGIN_PASS = process.env.ORIGIN_PASS || 'Intermidia2025@';
 const SYNC_INTERVAL_MS = 120000; // 2 minutes
+const LOOP_TARGET_SECONDS = parseInt(process.env.LOOP_TARGET_SECONDS || '180', 10);
+const LOOP_SYNC_INTERVAL_MS = parseInt(process.env.LOOP_SYNC_INTERVAL_MS || String(7 * 24 * 60 * 60 * 1000), 10); // 1 week
 const originHttpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 let originCookies = '';
+let loopSyncInProgress = false;
+let loopSyncLastRunAt = null;
 
 async function originLogin() {
   try {
@@ -2469,6 +2474,14 @@ setTimeout(async () => {
 // Periodic sync
 setInterval(syncWithOrigin, SYNC_INTERVAL_MS);
 
+// Weekly loop/cycle audit for commercial capacity planning
+setTimeout(() => {
+  syncLoopAuditsFromOrigin('startup').catch(() => {});
+}, 15000);
+setInterval(() => {
+  syncLoopAuditsFromOrigin('weekly').catch(() => {});
+}, LOOP_SYNC_INTERVAL_MS);
+
 // Scrape /locais/monitores to get monitor -> location mapping
 async function scrapeLocationMapping() {
   let resp;
@@ -2528,6 +2541,279 @@ async function scrapeLocationMapping() {
   console.log(`Location mapping: ${Object.keys(mapping).length} monitors mapped to ${locations.length} locations`);
   return mapping;
 }
+
+function parseLoopSeconds(rawValue) {
+  if (rawValue == null) return null;
+  const raw = String(rawValue).trim();
+  if (!raw) return null;
+
+  const normalized = raw.replace(',', '.');
+  const num = parseFloat(normalized.replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(num)) return null;
+
+  // tempo_ciclo from origin forms is usually in seconds (e.g. 300)
+  if (/min/i.test(normalized)) {
+    return Math.max(0, Math.round(num * 60));
+  }
+  return Math.max(0, Math.round(num));
+}
+
+function classifyLoopRisk(loopSeconds, targetSeconds = LOOP_TARGET_SECONDS) {
+  if (!Number.isFinite(loopSeconds)) {
+    return {
+      riskLevel: 'unknown',
+      riskScore: 0,
+      riskMessage: 'Loop indisponível',
+      remainingSeconds: 0,
+      availableSlots10: 0,
+      availableSlots15: 0,
+      estimatedUsedSlots10: 0,
+      estimatedUsedSlots15: 0
+    };
+  }
+
+  const remainingSeconds = Math.max(0, targetSeconds - loopSeconds);
+  const availableSlots10 = Math.floor(remainingSeconds / 10);
+  const availableSlots15 = Math.floor(remainingSeconds / 15);
+  const estimatedUsedSlots10 = Math.floor(loopSeconds / 10);
+  const estimatedUsedSlots15 = Math.floor(loopSeconds / 15);
+  const ratio = targetSeconds > 0 ? loopSeconds / targetSeconds : 0;
+
+  let riskLevel = 'low';
+  let riskMessage = 'Saudável para comercial';
+  let riskScore = Math.round(ratio * 1000);
+
+  if (loopSeconds >= targetSeconds) {
+    riskLevel = 'critical';
+    riskMessage = 'No limite ou acima do padrão';
+    riskScore = 10000 + (loopSeconds - targetSeconds);
+  } else if (ratio >= 0.9) {
+    riskLevel = 'high';
+    riskMessage = 'Muito próximo do limite';
+    riskScore = 7000 + Math.round(ratio * 1000);
+  } else if (ratio >= 0.75) {
+    riskLevel = 'medium';
+    riskMessage = 'Atenção comercial';
+    riskScore = 4000 + Math.round(ratio * 1000);
+  }
+
+  return {
+    riskLevel,
+    riskScore,
+    riskMessage,
+    remainingSeconds,
+    availableSlots10,
+    availableSlots15,
+    estimatedUsedSlots10,
+    estimatedUsedSlots15
+  };
+}
+
+async function scrapePremiumMonitorIds() {
+  let resp;
+  try {
+    resp = await axios.get(`${ORIGIN_BASE}/premium/locais`, {
+      headers: { Cookie: originCookies },
+      timeout: 30000,
+      httpsAgent: originHttpsAgent,
+      validateStatus: () => true
+    });
+  } catch (err) {
+    console.warn('Premium locais fetch failed:', err.message);
+    return [];
+  }
+
+  if (!resp.data || resp.data.includes('action="/login/verifica"')) {
+    const loggedIn = await originLogin();
+    if (!loggedIn) return [];
+    resp = await axios.get(`${ORIGIN_BASE}/premium/locais`, {
+      headers: { Cookie: originCookies },
+      timeout: 30000,
+      httpsAgent: originHttpsAgent,
+      validateStatus: () => true
+    });
+  }
+
+  const html = resp.data || '';
+  const ids = new Set();
+  const patterns = [
+    /adicionar-monitor\/id\/(\d+)/g,
+    /campanhas\/monitor\/(\d+)/g,
+    /data-id="(\d+)"/g
+  ];
+
+  for (const pattern of patterns) {
+    let m;
+    while ((m = pattern.exec(html)) !== null) {
+      const id = parseInt(m[1], 10);
+      if (Number.isInteger(id) && id > 0) ids.add(id);
+    }
+  }
+
+  return [...ids];
+}
+
+async function fetchOriginMonitorCycle(originId) {
+  let resp;
+  try {
+    resp = await axios.get(`${ORIGIN_BASE}/locais/adicionar-monitor/id/${originId}`, {
+      headers: { Cookie: originCookies },
+      timeout: 20000,
+      httpsAgent: originHttpsAgent,
+      validateStatus: () => true
+    });
+  } catch (err) {
+    return null;
+  }
+
+  if (!resp.data || String(resp.data).includes('action="/login/verifica"')) {
+    const loggedIn = await originLogin();
+    if (!loggedIn) return null;
+    resp = await axios.get(`${ORIGIN_BASE}/locais/adicionar-monitor/id/${originId}`, {
+      headers: { Cookie: originCookies },
+      timeout: 20000,
+      httpsAgent: originHttpsAgent,
+      validateStatus: () => true
+    });
+  }
+
+  if (!resp.data || resp.status !== 200) return null;
+
+  const cheerio = require('cheerio');
+  const $ = cheerio.load(resp.data);
+  const tempoCicloRaw = String($('[name="tempo_ciclo"]').val() || '').trim();
+  const nome = String($('[name="nome"]').val() || '').trim();
+  const vinculoText = String($('[name="vinculo"] option:selected').text() || '').trim();
+
+  return {
+    originId,
+    tempoCicloRaw,
+    loopSeconds: parseLoopSeconds(tempoCicloRaw),
+    name: nome,
+    vinculo: vinculoText,
+    sourceUrl: `${ORIGIN_BASE}/locais/adicionar-monitor/id/${originId}`
+  };
+}
+
+async function syncLoopAuditsFromOrigin(reason = 'manual') {
+  if (loopSyncInProgress) {
+    return { success: false, skipped: true, message: 'Loop sync already in progress' };
+  }
+
+  loopSyncInProgress = true;
+  const startedAt = new Date();
+  try {
+    const locationMap = await scrapeLocationMapping() || {};
+    const premiumIds = await scrapePremiumMonitorIds();
+    const fallbackIds = Object.keys(locationMap).map((id) => parseInt(id, 10)).filter(Number.isInteger);
+    const ids = [...new Set([...premiumIds, ...fallbackIds])];
+
+    if (!ids.length) {
+      return { success: false, message: 'Nenhum monitor encontrado no scraping de loop' };
+    }
+
+    let updated = 0;
+    let withLoop = 0;
+    let missingLoop = 0;
+
+    for (const originId of ids) {
+      const cycle = await fetchOriginMonitorCycle(originId);
+      if (!cycle) continue;
+
+      const screen = await Screen.findOne({ where: { originId } });
+      const locInfo = locationMap[originId] || {};
+      const risk = classifyLoopRisk(cycle.loopSeconds, LOOP_TARGET_SECONDS);
+      if (Number.isFinite(cycle.loopSeconds)) withLoop++; else missingLoop++;
+
+      await LoopAudit.upsert({
+        originId,
+        screenId: screen ? screen.id : null,
+        screenName: (screen && screen.name) || cycle.name || `Monitor ${originId}`,
+        location: (screen && screen.location) || locInfo.location || cycle.vinculo || null,
+        city: (screen && screen.address) || locInfo.city || null,
+        loopSeconds: Number.isFinite(cycle.loopSeconds) ? cycle.loopSeconds : null,
+        loopRaw: cycle.tempoCicloRaw || null,
+        targetSeconds: LOOP_TARGET_SECONDS,
+        remainingSeconds: risk.remainingSeconds,
+        availableSlots10: risk.availableSlots10,
+        availableSlots15: risk.availableSlots15,
+        estimatedUsedSlots10: risk.estimatedUsedSlots10,
+        estimatedUsedSlots15: risk.estimatedUsedSlots15,
+        riskLevel: risk.riskLevel,
+        riskScore: risk.riskScore,
+        riskMessage: risk.riskMessage,
+        sourceUrl: cycle.sourceUrl,
+        lastCheckedAt: new Date()
+      });
+
+      updated++;
+    }
+
+    loopSyncLastRunAt = new Date();
+    console.log(`Loop sync (${reason}): ${updated} atualizados, ${withLoop} com loop, ${missingLoop} sem loop`);
+    return {
+      success: true,
+      reason,
+      startedAt,
+      finishedAt: new Date(),
+      totalIds: ids.length,
+      updated,
+      withLoop,
+      missingLoop,
+      targetSeconds: LOOP_TARGET_SECONDS
+    };
+  } catch (err) {
+    console.error('Loop sync error:', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    loopSyncInProgress = false;
+  }
+}
+
+app.get('/loops/summary', authenticateToken, async (req, res) => {
+  try {
+    const risk = String(req.query.risk || 'all').toLowerCase();
+    const limit = Math.min(parseInt(req.query.limit || '300', 10) || 300, 1000);
+    const where = {};
+    if (['critical', 'high', 'medium', 'low', 'unknown'].includes(risk)) {
+      where.riskLevel = risk;
+    }
+
+    const items = await LoopAudit.findAll({
+      where,
+      order: [['riskScore', 'DESC'], ['loopSeconds', 'DESC'], ['updatedAt', 'DESC']],
+      limit
+    });
+
+    const all = await LoopAudit.findAll({ attributes: ['riskLevel', 'loopSeconds', 'availableSlots10', 'availableSlots15'] });
+    const summary = {
+      total: all.length,
+      critical: all.filter((i) => i.riskLevel === 'critical').length,
+      high: all.filter((i) => i.riskLevel === 'high').length,
+      medium: all.filter((i) => i.riskLevel === 'medium').length,
+      low: all.filter((i) => i.riskLevel === 'low').length,
+      unknown: all.filter((i) => i.riskLevel === 'unknown').length,
+      avgLoopSeconds: all.length ? Math.round(all.reduce((acc, i) => acc + (i.loopSeconds || 0), 0) / all.length) : 0,
+      totalSellable10: all.reduce((acc, i) => acc + (i.availableSlots10 || 0), 0),
+      totalSellable15: all.reduce((acc, i) => acc + (i.availableSlots15 || 0), 0)
+    };
+
+    res.json({
+      targetSeconds: LOOP_TARGET_SECONDS,
+      lastSyncAt: loopSyncLastRunAt,
+      summary,
+      items
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/loops/sync', authenticateToken, requireAdmin, async (req, res) => {
+  const result = await syncLoopAuditsFromOrigin('manual');
+  if (!result.success) return res.status(500).json(result);
+  res.json(result);
+});
 
 // Manual sync endpoint
 app.post('/sync/origin', authenticateToken, async (req, res) => {

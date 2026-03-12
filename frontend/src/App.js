@@ -111,6 +111,9 @@ function App() {
   const [usersList, setUsersList] = useState([]);
   const [slaData, setSlaData] = useState(null);
   const [patterns, setPatterns] = useState([]);
+  const [loopAuditData, setLoopAuditData] = useState({ targetSeconds: 180, summary: null, items: [], lastSyncAt: null });
+  const [loopAuditLoading, setLoopAuditLoading] = useState(false);
+  const [loopAuditSyncing, setLoopAuditSyncing] = useState(false);
   const [checklistTemplates, setChecklistTemplates] = useState([]);
   const [showChecklistModal, setShowChecklistModal] = useState(false);
   const [checklistForm, setChecklistForm] = useState({ name: '', category: '', items: '' });
@@ -393,7 +396,7 @@ function App() {
     if (activePage === 'tickets') { fetchTickets(); fetchTicketStats(); fetchChecklistTemplates(); }
     if (activePage === 'calendar') { fetchSchedules(); }
     if (activePage === 'inventory') { fetchParts(); }
-    if (activePage === 'analytics-pro') { fetchPatterns(); fetchTicketStats(); }
+    if (activePage === 'analytics-pro') { fetchPatterns(); fetchTicketStats(); fetchLoopAudits(); }
     if (activePage === 'notifications') { fetchNotifConfig(); }
   }, [activePage, authToken, calendarMonth, calendarYear]);
 
@@ -558,6 +561,40 @@ function App() {
       const res = await axios.get(`${API_BASE}/patterns`, authConfig);
       setPatterns(res.data);
     } catch (err) { console.error('Error fetching patterns:', err); }
+  };
+
+  const fetchLoopAudits = async () => {
+    if (!authToken) return;
+    setLoopAuditLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/loops/summary`, authConfig);
+      const payload = res.data || {};
+      setLoopAuditData({
+        targetSeconds: payload.targetSeconds || 180,
+        summary: payload.summary || null,
+        items: Array.isArray(payload.items) ? payload.items : [],
+        lastSyncAt: payload.lastSyncAt || null
+      });
+    } catch (err) {
+      console.error('Error fetching loop audits:', err);
+      setLoopAuditData({ targetSeconds: 180, summary: null, items: [], lastSyncAt: null });
+    } finally {
+      setLoopAuditLoading(false);
+    }
+  };
+
+  const syncLoopAudits = async () => {
+    if (!authToken || currentUser?.role !== 'admin') return;
+    setLoopAuditSyncing(true);
+    try {
+      await axios.post(`${API_BASE}/loops/sync`, {}, authConfig);
+      showAlert('Auditoria de loop atualizada com sucesso.', 'success');
+      await fetchLoopAudits();
+    } catch (err) {
+      showAlert(err.response?.data?.error || 'Erro ao sincronizar loops.', 'error');
+    } finally {
+      setLoopAuditSyncing(false);
+    }
   };
 
   const fetchChecklistTemplates = async () => {
@@ -3446,9 +3483,14 @@ function App() {
             <p>Métricas de SLA, padrões de falha e produtividade dos técnicos.</p>
           </div>
           <div className="page-header-actions">
-            <button className="btn-secondary" onClick={() => { fetchPatterns(); fetchTicketStats(); }}>
+            <button className="btn-secondary" onClick={() => { fetchPatterns(); fetchTicketStats(); fetchLoopAudits(); }}>
               <FiRefreshCw size={14} /> Atualizar
             </button>
+            {currentUser?.role === 'admin' && (
+              <button className="btn-secondary" onClick={syncLoopAudits} disabled={loopAuditSyncing}>
+                <FiClock size={14} /> {loopAuditSyncing ? 'Sincronizando Loop...' : 'Sincronizar Loops'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -3488,6 +3530,66 @@ function App() {
               }
             </div>
           </div>
+          </>
+        )}
+
+        {/* Loop/Cycle Capacity */}
+        <h4 className="section-title"><FiClock size={16} /> Auditoria de Loop Comercial</h4>
+        {loopAuditLoading ? (
+          <p className="text-muted" style={{ padding: '16px' }}>Carregando auditoria de loop...</p>
+        ) : (
+          <>
+            <div className="analytics-cards-row">
+              <div className="an-card"><div className="an-val">{loopAuditData.summary?.total || 0}</div><div className="an-label">Monitores Auditados</div></div>
+              <div className="an-card" style={{ borderLeft: '3px solid #ef4444' }}><div className="an-val">{loopAuditData.summary?.critical || 0}</div><div className="an-label">Críticos ({'>='} {Math.round((loopAuditData.targetSeconds || 180) / 60)}min)</div></div>
+              <div className="an-card" style={{ borderLeft: '3px solid #f59e0b' }}><div className="an-val">{loopAuditData.summary?.high || 0}</div><div className="an-label">Alto Risco</div></div>
+              <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable10 || 0}</div><div className="an-label">Cotas 10s Disponíveis</div></div>
+              <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable15 || 0}</div><div className="an-label">Cotas 15s Disponíveis</div></div>
+            </div>
+
+            {loopAuditData.items.length === 0 ? (
+              <p className="text-muted" style={{ padding: '16px' }}>Sem dados de loop ainda. Use "Sincronizar Loops" para iniciar o scraping.</p>
+            ) : (
+              <div className="loop-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Prioridade</th>
+                      <th>Monitor</th>
+                      <th>Local</th>
+                      <th>Loop Atual</th>
+                      <th>Risco</th>
+                      <th>Cotas 10s</th>
+                      <th>Cotas 15s</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loopAuditData.items.slice(0, 40).map((row, idx) => (
+                      <tr key={row.id || row.originId}>
+                        <td>#{idx + 1}</td>
+                        <td>
+                          <strong>{row.screenName || `Monitor ${row.originId}`}</strong>
+                          <div className="loop-origin-id">ID origem: {row.originId}</div>
+                        </td>
+                        <td>{row.location || '-'}</td>
+                        <td>{Number.isFinite(row.loopSeconds) ? `${row.loopSeconds}s` : '-'}</td>
+                        <td>
+                          <span className={`loop-risk-badge ${row.riskLevel || 'unknown'}`}>
+                            {row.riskLevel || 'unknown'}
+                          </span>
+                        </td>
+                        <td>{row.availableSlots10 ?? 0}</td>
+                        <td>{row.availableSlots15 ?? 0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <small className="text-muted">
+                  Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {loopAuditData.targetSeconds || 180}s.
+                  {loopAuditData.lastSyncAt ? ` Última sincronização: ${new Date(loopAuditData.lastSyncAt).toLocaleString('pt-BR')}.` : ''}
+                </small>
+              </div>
+            )}
           </>
         )}
 
