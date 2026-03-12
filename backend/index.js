@@ -2572,6 +2572,16 @@ function parseLoopFromMonitorHtml(html) {
   const body = String(html || '');
   if (!body) return { loopSeconds: null, loopDisplay: null };
 
+  // Preferred source: script assignment that updates the loop stat widget.
+  // Example: document.getElementById('tempoCiclo').textContent = '02:07';
+  const tempoCicloSetRegex = /getElementById\(['\"]tempoCiclo['\"]\)\.textContent\s*=\s*['\"](\d{1,2}:\d{2})['\"]/gi;
+  const tempoCicloMatches = [...body.matchAll(tempoCicloSetRegex)];
+  if (tempoCicloMatches.length) {
+    const candidate = tempoCicloMatches[tempoCicloMatches.length - 1][1];
+    const seconds = parseClockToSeconds(candidate);
+    if (Number.isFinite(seconds)) return { loopSeconds: seconds, loopDisplay: candidate };
+  }
+
   // Prefer the clock nearest to the "CICLO" badge (e.g. 02:07 CICLO)
   const cicloIdx = body.toUpperCase().indexOf('CICLO');
   if (cicloIdx >= 0) {
@@ -2668,6 +2678,7 @@ async function scrapePremiumMonitorIds() {
   const ids = new Set();
   const patterns = [
     /adicionar-monitor\/id\/(\d+)/g,
+    /premium\/campanhas-monitor\/id\/(\d+)/g,
     /campanhas\/monitor\/(\d+)/g,
     /data-id="(\d+)"/g
   ];
@@ -2720,7 +2731,7 @@ async function fetchOriginMonitorCycle(originId) {
   let monitorLoopSeconds = null;
   let monitorLoopDisplay = null;
   try {
-    let monitorResp = await axios.get(`${ORIGIN_BASE}/campanhas/monitor/${originId}`, {
+    let monitorResp = await axios.get(`${ORIGIN_BASE}/premium/campanhas-monitor/id/${originId}`, {
       headers: { Cookie: originCookies },
       timeout: 20000,
       httpsAgent: originHttpsAgent,
@@ -2730,7 +2741,7 @@ async function fetchOriginMonitorCycle(originId) {
     if (!monitorResp.data || String(monitorResp.data).includes('action="/login/verifica"')) {
       const loggedIn = await originLogin();
       if (loggedIn) {
-        monitorResp = await axios.get(`${ORIGIN_BASE}/campanhas/monitor/${originId}`, {
+        monitorResp = await axios.get(`${ORIGIN_BASE}/premium/campanhas-monitor/id/${originId}`, {
           headers: { Cookie: originCookies },
           timeout: 20000,
           httpsAgent: originHttpsAgent,
@@ -2755,7 +2766,7 @@ async function fetchOriginMonitorCycle(originId) {
     loopSeconds: chosenLoopSeconds,
     name: nome,
     vinculo: vinculoText,
-    sourceUrl: `${ORIGIN_BASE}/campanhas/monitor/${originId}`
+    sourceUrl: `${ORIGIN_BASE}/premium/campanhas-monitor/id/${originId}`
   };
 }
 
