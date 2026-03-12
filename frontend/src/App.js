@@ -2239,12 +2239,16 @@ function App() {
                           <FiEdit size={14} /> Editar Origem
                         </button>
                       )}
-                      <button
-                        onClick={() => changeStatus(selected, selected.status === 'online' ? 'offline' : 'online')}
-                        className={`btn-status-toggle ${selected.status}`}
+                      <select
+                        className={`status-select ${selected.status}`}
+                        value={selected.status}
+                        onChange={(e) => changeStatus(selected, e.target.value)}
                       >
-                        {selected.status === 'online' ? 'Colocar Offline' : 'Colocar Online'}
-                      </button>
+                        <option value="online">Online</option>
+                        <option value="offline">Offline</option>
+                        <option value="not_installed">Não Instalado</option>
+                        <option value="static">Estático</option>
+                      </select>
                     </div>
                   </div>
 

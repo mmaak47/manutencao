@@ -1106,6 +1106,24 @@
 
 .btn-status-toggle.offline:hover { background: var(--success); color: #FFFFFF; }
 
+.status-select {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-family: 'Montserrat', sans-serif;
+  outline: none;
+  transition: all var(--transition);
+  appearance: auto;
+}
+.status-select.online { background: var(--success-light); color: var(--success); border-color: rgba(40,167,69,0.3); }
+.status-select.offline { background: var(--danger-light); color: var(--danger); border-color: rgba(220,53,69,0.3); }
+.status-select.not_installed { background: #f0f0f0; color: #6c757d; border-color: #ccc; }
+.status-select.static { background: var(--warning-light); color: var(--warning); border-color: rgba(233,160,52,0.3); }
+.status-select:focus { box-shadow: 0 0 0 2px var(--accent-light); border-color: var(--accent); }
+
 .detail-status {
   padding: 16px 20px;
 }

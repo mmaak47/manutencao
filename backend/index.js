@@ -359,8 +359,8 @@ function isStaticMedia(screen) {
 }
 
 async function applyScreenStatus(screen, nextStatus, options = {}) {
-  // Don't override origin-managed statuses (static, not_installed) via local heartbeat
-  if (screen.status === 'static' || screen.status === 'not_installed') return { changed: false, screen };
+  // Don't override origin-managed statuses (static, not_installed) via local heartbeat — unless manual
+  if (!options.manual && (screen.status === 'static' || screen.status === 'not_installed')) return { changed: false, screen };
   const { heartbeatAt } = options;
   const updates = {};
   const previousStatus = screen.status;
@@ -495,7 +495,7 @@ app.patch('/screens/:id/status', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    await applyScreenStatus(screen, nextStatus);
+    await applyScreenStatus(screen, nextStatus, { manual: true });
 
     res.json(screen);
   } catch (err) {
