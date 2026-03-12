@@ -2009,6 +2009,38 @@ function App() {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  const groupedLoopItems = (() => {
+    const groupedMap = new Map();
+
+    (loopAuditData.items || []).forEach((row) => {
+      const locationLabel = String(row.location || '').trim() || `Monitor ${row.originId}`;
+      const locationKey = locationLabel.toLowerCase();
+      const loopKey = Number.isFinite(row.loopSeconds) ? String(row.loopSeconds) : 'na';
+      const groupKey = `${locationKey}::${loopKey}`;
+
+      if (!groupedMap.has(groupKey)) {
+        groupedMap.set(groupKey, {
+          ...row,
+          location: locationLabel,
+          monitorCount: 1,
+          originIds: [row.originId],
+          monitorNames: [row.screenName || `Monitor ${row.originId}`]
+        });
+        return;
+      }
+
+      const group = groupedMap.get(groupKey);
+      group.monitorCount += 1;
+      group.originIds.push(row.originId);
+      group.monitorNames.push(row.screenName || `Monitor ${row.originId}`);
+      group.availableSlots10 = Math.max(group.availableSlots10 || 0, row.availableSlots10 || 0);
+      group.availableSlots15 = Math.max(group.availableSlots15 || 0, row.availableSlots15 || 0);
+      group.remainingSeconds = Math.max(group.remainingSeconds || 0, row.remainingSeconds || 0);
+    });
+
+    return Array.from(groupedMap.values());
+  })();
+
   if (!authToken) {
     // ── SELF-REGISTER VIEW ──
     if (showSelfRegister) {
@@ -3558,7 +3590,7 @@ function App() {
               <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable15 || 0}</div><div className="an-label">Cotas 15s Disponíveis</div></div>
             </div>
 
-            {loopAuditData.items.length === 0 ? (
+            {groupedLoopItems.length === 0 ? (
               <p className="text-muted" style={{ padding: '16px' }}>Sem dados de loop ainda. Use "Sincronizar Loops" para iniciar o scraping.</p>
             ) : (
               <div className="loop-table">
@@ -3566,7 +3598,7 @@ function App() {
                   <thead>
                     <tr>
                       <th>Prioridade</th>
-                      <th>Monitor</th>
+                      <th>Monitor(es)</th>
                       <th>Local</th>
                       <th>Loop Atual</th>
                       <th>Tempo Livre</th>
@@ -3576,12 +3608,18 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {loopAuditData.items.slice(0, 40).map((row, idx) => (
-                      <tr key={row.id || row.originId}>
+                    {groupedLoopItems.slice(0, 40).map((row, idx) => (
+                      <tr key={`${row.location}-${row.loopSeconds}-${idx}`}>
                         <td>#{idx + 1}</td>
                         <td>
-                          <strong>{row.screenName || `Monitor ${row.originId}`}</strong>
-                          <div className="loop-origin-id">ID origem: {row.originId}</div>
+                          <strong>
+                            {row.monitorCount > 1
+                              ? `${row.monitorCount} telas agrupadas`
+                              : (row.screenName || `Monitor ${row.originId}`)}
+                          </strong>
+                          <div className="loop-origin-id">
+                            IDs origem: {row.originIds.join(', ')}
+                          </div>
                         </td>
                         <td>{row.location || '-'}</td>
                         <td>{formatSecondsClock(row.loopSeconds)}</td>
@@ -3602,7 +3640,7 @@ function App() {
                   </tbody>
                 </table>
                 <small className="text-muted">
-                  Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {formatSecondsClock(loopAuditData.targetSeconds || 180)}.
+                  Exibição agrupada por local + loop (monitores com mesmo loop no mesmo local viram uma linha). Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {formatSecondsClock(loopAuditData.targetSeconds || 180)}.
                   {loopAuditData.lastSyncAt ? ` Última sincronização: ${new Date(loopAuditData.lastSyncAt).toLocaleString('pt-BR')}.` : ''}
                 </small>
               </div>
