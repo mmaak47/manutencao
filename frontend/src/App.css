@@ -3397,3 +3397,232 @@
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
+
+/* ===== SELF-REGISTER FORM ===== */
+.register-container { max-width: 520px; }
+.register-box { max-height: 90vh; overflow-y: auto; }
+.register-form { display: flex; flex-direction: column; gap: 14px; }
+.register-row { display: flex; gap: 12px; }
+.register-row .form-group { flex: 1; }
+.register-footer {
+  text-align: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.register-footer p { font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: 'Montserrat', sans-serif;
+}
+.link-btn:hover { color: var(--accent-hover); }
+.field-error { font-size: 11px; color: var(--danger); margin-top: 3px; }
+
+/* Password strength */
+.password-strength { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.strength-item {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.strength-item.ok { background: var(--success-light, #d4edda); color: var(--success); }
+.strength-item.fail { background: #f8f9fa; color: #adb5bd; }
+
+/* Photo section */
+.photo-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.photo-tab {
+  flex: 1;
+  padding: 8px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.photo-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(233,93,52,.06); }
+.photo-upload-btn {
+  display: inline-block;
+  padding: 9px 16px;
+  background: #f8f9fa;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all .15s;
+  text-align: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+.photo-upload-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(233,93,52,.04); }
+.camera-preview { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.camera-video {
+  width: 100%;
+  max-height: 220px;
+  border-radius: var(--radius-sm);
+  background: #000;
+  object-fit: cover;
+}
+.capture-btn {
+  padding: 8px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+}
+.capture-btn:hover { background: var(--accent-hover); }
+.photo-preview-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.photo-preview-img {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2.5px solid var(--accent);
+}
+.photo-remove-btn {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Register success */
+.register-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0;
+  text-align: center;
+}
+.register-success-icon { font-size: 48px; }
+.register-success h2 { font-size: 20px; font-weight: 700; color: var(--text); }
+.register-success p { color: var(--text-secondary); font-size: 14px; max-width: 320px; }
+
+/* ===== APPROVALS PAGE ===== */
+.approvals-page { padding: 24px; overflow-y: auto; flex: 1; }
+.approvals-page .page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.approvals-page .page-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.approvals-page .page-header p { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
+.approvals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.approval-card {
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: box-shadow .18s;
+}
+.approval-card:hover { box-shadow: var(--shadow-lg); }
+.approval-card.status-approved { border-color: var(--success); }
+.approval-card.status-rejected { opacity: .75; border-color: var(--danger); }
+.approval-photo { position: relative; width: 72px; height: 72px; flex-shrink: 0; align-self: center; }
+.approval-photo img {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2.5px solid var(--border);
+}
+.approval-photo-placeholder {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+}
+.approval-badge {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.badge-pending { background: #fff3cd; color: #856404; border: 1px solid #ffc107; }
+.badge-approved { background: #d4edda; color: #155724; border: 1px solid var(--success); }
+.badge-rejected { background: #f8d7da; color: #721c24; border: 1px solid var(--danger); }
+.approval-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.approval-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.approval-detail { font-size: 12px; color: var(--text-secondary); }
+.approval-detail strong { color: var(--text); }
+.rejection-reason {
+  background: #fff3f3;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border-left: 3px solid var(--danger);
+  color: var(--danger) !important;
+}
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.btn-approve {
+  flex: 1;
+  padding: 8px;
+  background: var(--success);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.btn-approve:hover { opacity: .86; }
+.btn-reject {
+  flex: 1;
+  padding: 8px;
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.btn-reject:hover { opacity: .86; }

@@ -21,6 +21,7 @@ const NotificationConfig = require('./models/NotificationConfig');
 const Contract = require('./models/Contract');
 const Vendor = require('./models/Vendor');
 const TelemetrySnapshot = require('./models/TelemetrySnapshot');
+const TechRegistration = require('./models/TechRegistration');
 const { authenticateToken, requireAdmin, JWT_SECRET } = require('./middleware/auth');
 const backup = require('./config/backup');
 
@@ -34,9 +35,42 @@ Vendor.hasMany(Contract, { foreignKey: 'vendorId' });
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' }));
 
 const OFFLINE_TODO_THRESHOLD_MS = 12 * 60 * 60 * 1000;
+
+// ===== SELF-REGISTER HELPERS =====
+const selfRegisterAttempts = new Map();
+function checkRegisterRateLimit(ip) {
+  const now = Date.now();
+  const windowMs = 60 * 60 * 1000;
+  const attempts = (selfRegisterAttempts.get(ip) || []).filter(t => now - t < windowMs);
+  if (attempts.length >= 5) return false;
+  attempts.push(now);
+  selfRegisterAttempts.set(ip, attempts);
+  return true;
+}
+
+function validateCPF(cpf) {
+  const n = cpf.replace(/\D/g, '');
+  if (n.length !== 11 || /^(\d)\1{10}$/.test(n)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += parseInt(n[i]) * (10 - i);
+  let d1 = (sum * 10) % 11; if (d1 >= 10) d1 = 0;
+  if (d1 !== parseInt(n[9])) return false;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += parseInt(n[i]) * (11 - i);
+  let d2 = (sum * 10) % 11; if (d2 >= 10) d2 = 0;
+  return d2 === parseInt(n[10]);
+}
+
+function validatePasswordStrength(password) {
+  return password.length >= 8
+    && /[A-Z]/.test(password)
+    && /[a-z]/.test(password)
+    && /[0-9]/.test(password)
+    && /[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\\/]/.test(password);
+}
 
 // Initialize database
 sequelize.sync().then(async () => {
@@ -306,6 +340,112 @@ app.post('/auth/change-password', authenticateToken, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ===== SELF-REGISTER (public) =====
+app.post('/auth/self-register', async (req, res) => {
+  try {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    if (!checkRegisterRateLimit(ip)) {
+      return res.status(429).json({ error: 'Muitas tentativas. Aguarde 1 hora e tente novamente.' });
+    }
+
+    const { firstName, lastName, cpf, email, password, photoData } = req.body;
+    if (!firstName?.trim() || !lastName?.trim() || !cpf || !email || !password) {
+      return res.status(400).json({ error: 'Preencha todos os campos obrigatórios.' });
+    }
+
+    if (!validateCPF(cpf)) {
+      return res.status(400).json({ error: 'CPF inválido.' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'E-mail inválido.' });
+    }
+
+    if (!validatePasswordStrength(password)) {
+      return res.status(400).json({ error: 'Senha fraca. Use no mínimo 8 caracteres com maiúscula, minúscula, número e símbolo.' });
+    }
+
+    const cpfClean = cpf.replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    const existing = await TechRegistration.findOne({ where: { cpf: cpfClean } });
+    if (existing) {
+      return res.status(409).json({ error: 'Este CPF já possui uma solicitação registrada.' });
+    }
+    const existingEmail = await TechRegistration.findOne({ where: { email: email.toLowerCase() } });
+    if (existingEmail) {
+      return res.status(409).json({ error: 'Este e-mail já possui uma solicitação registrada.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    await TechRegistration.create({
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      cpf: cpfClean,
+      email: email.toLowerCase().trim(),
+      passwordHash,
+      photoData: photoData || null,
+      status: 'pending'
+    });
+
+    // Notify admins
+    const nConfig = await NotificationConfig.findOne();
+    if (nConfig?.whatsappEnabled) {
+      sendNotification(`🆕 *NOVA SOLICITAÇÃO DE ACESSO*\n\n👤 ${firstName.trim()} ${lastName.trim()}\n📧 ${email}\n\nAcesse o sistema para aprovar ou rejeitar.`);
+    }
+
+    res.status(201).json({ success: true, message: 'Solicitação enviada. Aguarde aprovação do administrador.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== ADMIN: LIST REGISTRATIONS =====
+app.get('/admin/registrations', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const status = req.query.status || 'pending';
+    const where = status === 'all' ? {} : { status };
+    const regs = await TechRegistration.findAll({ where, order: [['createdAt', 'DESC']] });
+    // Never return passwordHash
+    res.json(regs.map(r => ({
+      id: r.id, firstName: r.firstName, lastName: r.lastName,
+      cpf: r.cpf, email: r.email, photoData: r.photoData,
+      status: r.status, rejectionReason: r.rejectionReason,
+      reviewedAt: r.reviewedAt, reviewedBy: r.reviewedBy,
+      createdAt: r.createdAt
+    })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== ADMIN: APPROVE REGISTRATION =====
+app.post('/admin/registrations/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const reg = await TechRegistration.findByPk(req.params.id);
+    if (!reg || reg.status !== 'pending') return res.status(400).json({ error: 'Solicitação não encontrada ou já processada.' });
+
+    // Generate username from email prefix
+    let baseUsername = reg.email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g, '');
+    if (!baseUsername) baseUsername = reg.firstName.toLowerCase();
+    let username = baseUsername;
+    let counter = 1;
+    while (await User.findOne({ where: { username } })) { username = baseUsername + counter++; }
+
+    const newUser = await User.create({ username, passwordHash: reg.passwordHash, role: 'user' });
+    await reg.update({ status: 'approved', reviewedBy: req.user.username, reviewedAt: new Date() });
+    await logAudit(req, 'approve', 'tech_registration', reg.id, { username, name: `${reg.firstName} ${reg.lastName}` });
+    res.json({ success: true, username, userId: newUser.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== ADMIN: REJECT REGISTRATION =====
+app.post('/admin/registrations/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const reg = await TechRegistration.findByPk(req.params.id);
+    if (!reg || reg.status !== 'pending') return res.status(400).json({ error: 'Solicitação não encontrada ou já processada.' });
+    await reg.update({ status: 'rejected', rejectionReason: reason || null, reviewedBy: req.user.username, reviewedAt: new Date() });
+    await logAudit(req, 'reject', 'tech_registration', reg.id, { reason, name: `${reg.firstName} ${reg.lastName}` });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // Get all screens

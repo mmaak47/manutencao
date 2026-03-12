@@ -136,6 +136,26 @@ function App() {
   const userMenuRef = useRef(null);
   const reportsLoadedRef = useRef(false);
   const detailPanelRef = useRef(null);
+  const regVideoRef = useRef(null);
+  const regStreamRef = useRef(null);
+
+  // ===== SELF-REGISTER STATE =====
+  const [showSelfRegister, setShowSelfRegister] = useState(false);
+  const [regForm, setRegForm] = useState({ firstName: '', lastName: '', cpf: '', email: '', password: '', confirmPassword: '' });
+  const [regPhotoPreview, setRegPhotoPreview] = useState(null);
+  const [regPhotoData, setRegPhotoData] = useState(null);
+  const [regCameraOpen, setRegCameraOpen] = useState(false);
+  const [regLoading, setRegLoading] = useState(false);
+  const [regSuccess, setRegSuccess] = useState(false);
+  const [regError, setRegError] = useState('');
+  const [regPhotoTab, setRegPhotoTab] = useState('upload');
+
+  // ===== PENDING REGISTRATIONS STATE (admin) =====
+  const [pendingRegistrations, setPendingRegistrations] = useState([]);
+  const [pendingRegLoading, setPendingRegLoading] = useState(false);
+  const [regRejectModal, setRegRejectModal] = useState(null);
+  const [regRejectReason, setRegRejectReason] = useState('');
+  const [regStatusFilter, setRegStatusFilter] = useState('pending');
 
   // Origin system edit: fetch form data for a monitor
   const openOriginEdit = async (screen) => {
@@ -351,6 +371,8 @@ function App() {
     fetchScreens();
     fetchContacts();
     fetchUsers();
+    // Pre-load pending registrations count for admin badge
+    fetchPendingRegistrations('pending');
 
     // Auto-refresh screens every 5 seconds
     const refreshInterval = setInterval(() => {
@@ -740,6 +762,137 @@ function App() {
     } catch (err) {
       handleLogout();
     }
+  };
+
+  // ===== SELF-REGISTER HELPERS =====
+  const validateCPFFrontend = (cpf) => {
+    const n = cpf.replace(/\D/g, '');
+    if (n.length !== 11 || /^(\d)\1{10}$/.test(n)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += parseInt(n[i]) * (10 - i);
+    let d1 = (sum * 10) % 11; if (d1 >= 10) d1 = 0;
+    if (d1 !== parseInt(n[9])) return false;
+    sum = 0;
+    for (let i = 0; i < 10; i++) sum += parseInt(n[i]) * (11 - i);
+    let d2 = (sum * 10) % 11; if (d2 >= 10) d2 = 0;
+    return d2 === parseInt(n[10]);
+  };
+
+  const checkPasswordStrength = (pwd) => ({
+    length: pwd.length >= 8,
+    upper: /[A-Z]/.test(pwd),
+    lower: /[a-z]/.test(pwd),
+    number: /[0-9]/.test(pwd),
+    special: /[!@#$%^&*(),.?":{}|<>_\-+=[\]\\\/]/.test(pwd),
+  });
+
+  const formatCPFInput = (value) => {
+    const n = value.replace(/\D/g, '').slice(0, 11);
+    return n.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4')
+            .replace(/(\d{3})(\d{3})(\d{1,3})$/, '$1.$2.$3')
+            .replace(/(\d{3})(\d{1,3})$/, '$1.$2');
+  };
+
+  const resizeImageToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxSize = 800;
+        let { width, height } = img;
+        if (width > height) { if (width > maxSize) { height = Math.round(height * maxSize / width); width = maxSize; } }
+        else { if (height > maxSize) { width = Math.round(width * maxSize / height); height = maxSize; } }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.75));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const openRegCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      regStreamRef.current = stream;
+      setRegCameraOpen(true);
+      setTimeout(() => { if (regVideoRef.current) regVideoRef.current.srcObject = stream; }, 80);
+    } catch (err) { setRegError('Não foi possível acessar a câmera: ' + err.message); }
+  };
+
+  const closeRegCamera = () => {
+    if (regStreamRef.current) { regStreamRef.current.getTracks().forEach(t => t.stop()); regStreamRef.current = null; }
+    setRegCameraOpen(false);
+  };
+
+  const captureRegPhoto = () => {
+    const video = regVideoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+    setRegPhotoPreview(dataUrl);
+    setRegPhotoData(dataUrl);
+    closeRegCamera();
+  };
+
+  const submitSelfRegister = async (e) => {
+    e.preventDefault();
+    setRegError('');
+    const { firstName, lastName, cpf, email, password, confirmPassword } = regForm;
+    if (!firstName.trim() || !lastName.trim() || !cpf || !email || !password) {
+      return setRegError('Preencha todos os campos obrigatórios.');
+    }
+    if (!validateCPFFrontend(cpf)) return setRegError('CPF inválido. Verifique os dígitos verificadores.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setRegError('E-mail inválido.');
+    const strength = checkPasswordStrength(password);
+    if (!Object.values(strength).every(Boolean)) return setRegError('Senha fraca. Use no mínimo 8 caracteres com maiúscula, minúscula, número e símbolo.');
+    if (password !== confirmPassword) return setRegError('Confirmação de senha não confere.');
+    setRegLoading(true);
+    try {
+      await axios.post(`${API_BASE}/auth/self-register`, { firstName: firstName.trim(), lastName: lastName.trim(), cpf, email, password, photoData: regPhotoData });
+      setRegSuccess(true);
+    } catch (err) {
+      setRegError(err.response?.data?.error || 'Erro ao enviar solicitação.');
+    } finally { setRegLoading(false); }
+  };
+
+  const resetSelfRegisterForm = () => {
+    setRegForm({ firstName: '', lastName: '', cpf: '', email: '', password: '', confirmPassword: '' });
+    setRegPhotoPreview(null); setRegPhotoData(null);
+    setRegSuccess(false); setRegError(''); setRegCameraOpen(false); setRegPhotoTab('upload');
+    closeRegCamera();
+  };
+
+  // ===== ADMIN REGISTRATIONS HELPERS =====
+  const fetchPendingRegistrations = async (status = 'pending') => {
+    setPendingRegLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/admin/registrations?status=${status}`, authConfig);
+      setPendingRegistrations(res.data);
+    } catch (err) { console.error(err); }
+    finally { setPendingRegLoading(false); }
+  };
+
+  const approveRegistration = async (id) => {
+    try {
+      const res = await axios.post(`${API_BASE}/admin/registrations/${id}/approve`, {}, authConfig);
+      showAlert(`✅ Técnico aprovado! Login criado: ${res.data.username}`, 'success');
+      fetchPendingRegistrations(regStatusFilter);
+    } catch (err) { showAlert(err.response?.data?.error || 'Erro ao aprovar.', 'error'); }
+  };
+
+  const rejectRegistration = async (id, reason) => {
+    try {
+      await axios.post(`${API_BASE}/admin/registrations/${id}/reject`, { reason }, authConfig);
+      showAlert('Solicitação rejeitada.', 'info');
+      setRegRejectModal(null); setRegRejectReason('');
+      fetchPendingRegistrations(regStatusFilter);
+    } catch (err) { showAlert(err.response?.data?.error || 'Erro ao rejeitar.', 'error'); }
   };
 
   const handleLogin = async (e) => {
@@ -1801,6 +1954,138 @@ function App() {
   };
 
   if (!authToken) {
+    // ── SELF-REGISTER VIEW ──
+    if (showSelfRegister) {
+      const strength = checkPasswordStrength(regForm.password);
+      const allStrong = Object.values(strength).every(Boolean);
+      return (
+        <div className="login-page">
+          <div className="login-container register-container">
+            <div className="login-box register-box">
+              {regSuccess ? (
+                <div className="register-success">
+                  <div className="register-success-icon">✅</div>
+                  <h2>Solicitação enviada!</h2>
+                  <p>Seu cadastro está aguardando aprovação do administrador. Você será contatado em breve.</p>
+                  <button className="login-button" onClick={() => { setShowSelfRegister(false); resetSelfRegisterForm(); }}>
+                    Voltar ao login
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="login-header">
+                    <img src={logo} className="login-logo" alt="Logo Intermídia" />
+                    <h1>Solicitar Acesso</h1>
+                    <p>Preencha seus dados para se cadastrar como técnico</p>
+                  </div>
+                  <form className="register-form" onSubmit={submitSelfRegister}>
+                    <div className="register-row">
+                      <div className="form-group">
+                        <label>Nome *</label>
+                        <input type="text" placeholder="Primeiro nome" value={regForm.firstName}
+                          onChange={e => setRegForm(f => ({ ...f, firstName: e.target.value }))} />
+                      </div>
+                      <div className="form-group">
+                        <label>Sobrenome *</label>
+                        <input type="text" placeholder="Sobrenome" value={regForm.lastName}
+                          onChange={e => setRegForm(f => ({ ...f, lastName: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label>CPF *</label>
+                      <input type="text" placeholder="000.000.000-00" value={regForm.cpf} maxLength={14}
+                        onChange={e => setRegForm(f => ({ ...f, cpf: formatCPFInput(e.target.value) }))} />
+                      {regForm.cpf.replace(/\D/g,'').length === 11 && !validateCPFFrontend(regForm.cpf) && (
+                        <span className="field-error">CPF inválido</span>
+                      )}
+                    </div>
+                    <div className="form-group">
+                      <label>E-mail *</label>
+                      <input type="email" placeholder="seu@email.com" value={regForm.email}
+                        onChange={e => setRegForm(f => ({ ...f, email: e.target.value }))} />
+                    </div>
+                    <div className="form-group">
+                      <label>Senha *</label>
+                      <input type="password" placeholder="Mínimo 8 caracteres" value={regForm.password}
+                        onChange={e => setRegForm(f => ({ ...f, password: e.target.value }))} />
+                      {regForm.password && (
+                        <div className="password-strength">
+                          {[['length','≥ 8 caracteres'],['upper','Maiúscula'],['lower','Minúscula'],['number','Número'],['special','Símbolo']].map(([k,label]) => (
+                            <span key={k} className={`strength-item ${strength[k] ? 'ok' : 'fail'}`}>
+                              {strength[k] ? '✓' : '✗'} {label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="form-group">
+                      <label>Confirmar Senha *</label>
+                      <input type="password" placeholder="Repita a senha" value={regForm.confirmPassword}
+                        onChange={e => setRegForm(f => ({ ...f, confirmPassword: e.target.value }))} />
+                      {regForm.confirmPassword && regForm.password !== regForm.confirmPassword && (
+                        <span className="field-error">Senhas não conferem</span>
+                      )}
+                    </div>
+
+                    {/* Photo section */}
+                    <div className="form-group">
+                      <label>Foto (opcional)</label>
+                      <div className="photo-tabs">
+                        <button type="button" className={`photo-tab ${regPhotoTab === 'upload' ? 'active' : ''}`} onClick={() => { setRegPhotoTab('upload'); closeRegCamera(); }}>📁 Upload</button>
+                        <button type="button" className={`photo-tab ${regPhotoTab === 'camera' ? 'active' : ''}`} onClick={() => { setRegPhotoTab('camera'); openRegCamera(); }}>📷 Câmera</button>
+                      </div>
+                      {regPhotoTab === 'upload' && (
+                        <label className="photo-upload-btn">
+                          Selecionar foto
+                          <input type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }}
+                            onChange={async e => {
+                              const file = e.target.files[0];
+                              if (!file) return;
+                              if (file.size > 10 * 1024 * 1024) return setRegError('Foto muito grande (máx. 10 MB).');
+                              const b64 = await resizeImageToBase64(file);
+                              setRegPhotoPreview(b64); setRegPhotoData(b64);
+                            }} />
+                        </label>
+                      )}
+                      {regPhotoTab === 'camera' && (
+                        <div className="camera-preview">
+                          {regCameraOpen ? (
+                            <>
+                              <video ref={regVideoRef} autoPlay playsInline muted className="camera-video" />
+                              <button type="button" className="capture-btn" onClick={captureRegPhoto}>📸 Capturar</button>
+                            </>
+                          ) : (
+                            <button type="button" className="photo-upload-btn" onClick={openRegCamera}>Abrir câmera</button>
+                          )}
+                        </div>
+                      )}
+                      {regPhotoPreview && (
+                        <div className="photo-preview-wrap">
+                          <img src={regPhotoPreview} alt="Prévia" className="photo-preview-img" />
+                          <button type="button" className="photo-remove-btn" onClick={() => { setRegPhotoPreview(null); setRegPhotoData(null); }}>✕ Remover</button>
+                        </div>
+                      )}
+                    </div>
+
+                    {regError && <div className="login-error">⚠️ {regError}</div>}
+                    <button type="submit" className="login-button" disabled={regLoading || !allStrong}>
+                      {regLoading ? 'Enviando...' : 'Solicitar acesso'}
+                    </button>
+                  </form>
+                  <div className="register-footer">
+                    <button type="button" className="link-btn" onClick={() => { setShowSelfRegister(false); resetSelfRegisterForm(); }}>
+                      ← Voltar ao login
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── LOGIN VIEW ──
     return (
       <div className="login-page">
         <div className="login-container">
@@ -1835,6 +2120,12 @@ function App() {
                 {isLoggingIn ? 'Entrando...' : 'Entrar'}
               </button>
             </form>
+            <div className="register-footer">
+              <p>É técnico e não tem acesso?</p>
+              <button type="button" className="link-btn" onClick={() => { setShowSelfRegister(true); resetSelfRegisterForm(); }}>
+                Solicitar acesso
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1899,6 +2190,14 @@ function App() {
           {currentUser?.role === 'admin' && (
             <button className={`sidebar-item ${activePage === 'backups' ? 'active' : ''}`} onClick={() => { setActivePage('backups'); fetchBackups(); }}>
               <FiDatabase size={18} /> Backups
+            </button>
+          )}
+          {currentUser?.role === 'admin' && (
+            <button className={`sidebar-item ${activePage === 'approvals' ? 'active' : ''}`} onClick={() => { setActivePage('approvals'); fetchPendingRegistrations('pending'); }}>
+              <FiUserCheck size={18} /> Aprovações
+              {pendingRegistrations.filter(r => r.status === 'pending').length > 0 && activePage !== 'approvals' && (
+                <span className="nav-badge warning">{pendingRegistrations.filter(r => r.status === 'pending').length}</span>
+              )}
             </button>
           )}
           <button className={`sidebar-item ${activePage === 'notifications' ? 'active' : ''}`} onClick={() => setActivePage('notifications')}>
@@ -3576,6 +3875,95 @@ function App() {
                 </button>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+      ) : activePage === 'approvals' ? (
+      <div className="approvals-page">
+        <div className="page-header">
+          <div>
+            <h2><FiUserCheck size={20} /> Aprovações de Técnicos</h2>
+            <p>Gerencie os pedidos de acesso enviados pelos técnicos.</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['pending','approved','rejected'].map(s => (
+              <button key={s} className={`btn-secondary ${regStatusFilter === s ? 'active' : ''}`}
+                style={{ fontWeight: regStatusFilter === s ? 700 : 400, opacity: regStatusFilter === s ? 1 : 0.7 }}
+                onClick={() => { setRegStatusFilter(s); fetchPendingRegistrations(s); }}>
+                {s === 'pending' ? '⏳ Pendentes' : s === 'approved' ? '✅ Aprovados' : '❌ Rejeitados'}
+              </button>
+            ))}
+            <button className="btn-secondary" onClick={() => fetchPendingRegistrations(regStatusFilter)} title="Atualizar">
+              <FiRefreshCw size={14} />
+            </button>
+          </div>
+        </div>
+
+        {pendingRegLoading ? (
+          <div className="loading-state">Carregando solicitações...</div>
+        ) : pendingRegistrations.length === 0 ? (
+          <div className="empty-state">
+            <FiUserCheck size={40} style={{ opacity: 0.3 }} />
+            <p>{regStatusFilter === 'pending' ? 'Nenhuma solicitação pendente.' : 'Nenhum registro encontrado.'}</p>
+          </div>
+        ) : (
+          <div className="approvals-grid">
+            {pendingRegistrations.map(reg => (
+              <div key={reg.id} className={`approval-card status-${reg.status}`}>
+                <div className="approval-photo">
+                  {reg.photoData
+                    ? <img src={reg.photoData} alt="Foto" />
+                    : <div className="approval-photo-placeholder">{reg.firstName?.charAt(0)}{reg.lastName?.charAt(0)}</div>
+                  }
+                  <span className={`approval-badge badge-${reg.status}`}>
+                    {reg.status === 'pending' ? 'Pendente' : reg.status === 'approved' ? 'Aprovado' : 'Rejeitado'}
+                  </span>
+                </div>
+                <div className="approval-info">
+                  <div className="approval-name">{reg.firstName} {reg.lastName}</div>
+                  <div className="approval-detail"><strong>CPF:</strong> {reg.cpf}</div>
+                  <div className="approval-detail"><strong>E-mail:</strong> {reg.email}</div>
+                  <div className="approval-detail"><strong>Solicitado:</strong> {new Date(reg.createdAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</div>
+                  {reg.reviewedBy && <div className="approval-detail"><strong>Revisado por:</strong> {reg.reviewedBy}</div>}
+                  {reg.rejectionReason && <div className="approval-detail rejection-reason"><strong>Motivo:</strong> {reg.rejectionReason}</div>}
+                </div>
+                {reg.status === 'pending' && (
+                  <div className="approval-actions">
+                    <button className="btn-approve" onClick={() => approveRegistration(reg.id)}>
+                      ✅ Aprovar
+                    </button>
+                    <button className="btn-reject" onClick={() => { setRegRejectModal(reg); setRegRejectReason(''); }}>
+                      ❌ Rejeitar
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Reject reason modal */}
+        {regRejectModal && (
+          <div className="modal-overlay" onClick={() => setRegRejectModal(null)}>
+            <div className="modal-content" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Rejeitar solicitação</h2>
+                <button className="modal-close" onClick={() => setRegRejectModal(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <p style={{ marginBottom: 12 }}>Rejeitar o pedido de <strong>{regRejectModal.firstName} {regRejectModal.lastName}</strong>?</p>
+                <label style={{ fontSize: 13, fontWeight: 600 }}>Motivo (opcional)</label>
+                <textarea className="note-input" rows={3} placeholder="Ex.: Documentação insuficiente..."
+                  value={regRejectReason} onChange={e => setRegRejectReason(e.target.value)} style={{ marginTop: 6 }} />
+              </div>
+              <div className="modal-footer">
+                <button className="btn-secondary" onClick={() => setRegRejectModal(null)}>Cancelar</button>
+                <button className="btn-primary" style={{ background: '#dc3545', borderColor: '#dc3545' }}
+                  onClick={() => rejectRegistration(regRejectModal.id, regRejectReason)}>
+                  Confirmar rejeição
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
