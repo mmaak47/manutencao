@@ -2014,20 +2014,69 @@ function App() {
   };
 
   const normalizeCityName = (rawCity, locationName) => {
+    const toCitySlug = (value = '') => String(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const toTitleCase = (value = '') => value
+      .split(' ')
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(' ');
+
+    const canonicalBySlug = {
+      bc: 'Balneário Camboriú',
+      'balneario camboriu': 'Balneário Camboriú',
+      itajai: 'Itajaí',
+      londrina: 'Londrina',
+      maringa: 'Maringá'
+    };
+
+    const canonicalCity = (candidate) => {
+      const slug = toCitySlug(candidate);
+      if (!slug) return null;
+      if (canonicalBySlug[slug]) return canonicalBySlug[slug];
+
+      const noUfSlug = slug.replace(/\s+[a-z]{2}$/, '').trim();
+      if (canonicalBySlug[noUfSlug]) return canonicalBySlug[noUfSlug];
+
+      return toTitleCase(noUfSlug || slug);
+    };
+
+    const candidates = [];
     const cityText = String(rawCity || '').trim();
     if (cityText) {
+      // Common format: "..., Londrina/PR - CEP ..."
+      const cityUfAnywhere = cityText.match(/([A-Za-zÀ-ÿ\s'\-]+)\s*\/[A-Za-z]{2}\b/i);
+      if (cityUfAnywhere && cityUfAnywhere[1]) candidates.push(cityUfAnywhere[1]);
+
+      // If raw city comes as address with commas, keep last segment as city candidate
+      const commaParts = cityText.split(',').map((part) => part.trim()).filter(Boolean);
+      if (commaParts.length > 1) candidates.push(commaParts[commaParts.length - 1]);
+
       const fromUfPattern = cityText.match(/,\s*([^,\/\-]+)\s*\/[A-Za-z]{2}\b/i);
-      if (fromUfPattern && fromUfPattern[1]) return fromUfPattern[1].trim();
+      if (fromUfPattern && fromUfPattern[1]) candidates.push(fromUfPattern[1]);
 
       const justCity = cityText.match(/^\s*([A-Za-zÀ-ÿ\s'\-]+)\s*$/);
-      if (justCity && justCity[1]) return justCity[1].trim();
+      if (justCity && justCity[1]) candidates.push(justCity[1]);
+
+      candidates.push(cityText);
     }
 
     const locationText = String(locationName || '').trim();
     const locationCity = locationText.match(/-\s*([A-Za-zÀ-ÿ\s'\-]+)$/);
-    if (locationCity && locationCity[1]) return locationCity[1].trim();
+    if (locationCity && locationCity[1]) candidates.push(locationCity[1]);
 
-    return cityText || 'Sem cidade';
+    for (const candidate of candidates) {
+      const normalized = canonicalCity(candidate);
+      if (normalized) return normalized;
+    }
+
+    return 'Sem cidade';
   };
 
   const groupedLoopItems = (() => {
