@@ -2139,56 +2139,31 @@ function App() {
     return rows;
   })();
 
-  const buildLoopCityWhatsappMessage = (cityName, rows) => {
-    const lines = [
-      `Relatório de loops - ${cityName}`,
-      `Meta: ${formatSecondsClock(loopAuditData.targetSeconds || 180)}`,
-      ''
-    ];
-
-    rows.forEach((row) => {
-      const loop = formatSecondsClock(row.loopSeconds);
-      const free = Number.isFinite(row.remainingSeconds)
-        ? `${formatSecondsClock(row.remainingSeconds)} livre${row.remainingSeconds < 60 ? ' (<1 min)' : ''}`
-        : '-';
-      lines.push(`- ${row.location}: loop ${loop} | ${free} | risco ${String(row.riskLevel || 'unknown').toUpperCase()}`);
-    });
-
-    return lines.join('\n');
-  };
-
   const sendCityLoopToWhatsapp = async () => {
-    if (loopCityFilter === 'all') {
-      showAlert('Selecione uma cidade para enviar no WhatsApp.', 'warning');
-      return;
-    }
-
-    const cityRows = filteredLoopItems.filter((row) => (row.city || 'Sem cidade') === loopCityFilter);
-    if (!cityRows.length) {
-      showAlert('Não há dados de loop para a cidade selecionada.', 'warning');
-      return;
-    }
-
     const vendorPool = vendors.length ? vendors : await fetchVendors();
-
-    const targetVendors = (loopVendorFilter === 'all'
+    const targetVendors = loopVendorFilter === 'all'
       ? vendorPool.filter((v) => v.active !== false)
-      : vendorPool.filter((v) => String(v.id) === String(loopVendorFilter) && v.active !== false)
-    );
+      : vendorPool.filter((v) => String(v.id) === String(loopVendorFilter) && v.active !== false);
 
     if (!targetVendors.length) {
       showAlert('Nenhum vendedor ativo selecionado para envio.', 'warning');
       return;
     }
 
-    const message = buildLoopCityWhatsappMessage(loopCityFilter, cityRows);
-    for (const vendor of targetVendors) {
-      const waBase = getWhatsappLink(vendor.phone || '');
-      if (!waBase || waBase === '#') continue;
-      window.open(`${waBase}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
-    }
+    try {
+      const res = await axios.post(`${API_BASE}/loops/notify-city-summary`, {
+        city: loopCityFilter,
+        vendorId: loopVendorFilter === 'all' ? null : loopVendorFilter
+      }, authConfig);
 
-    showAlert(`Mensagem da cidade ${loopCityFilter} preparada para ${targetVendors.length} vendedor(es).`, 'success');
+      const payload = res.data || {};
+      showAlert(
+        `Disparo concluído via API: ${payload.sentMessages || 0} mensagens (${payload.cityCount || 0} cidade(s)).`,
+        'success'
+      );
+    } catch (err) {
+      showAlert(err.response?.data?.message || err.response?.data?.error || 'Erro ao disparar mensagens por cidade.', 'error');
+    }
   };
 
   if (!authToken) {
@@ -3758,7 +3733,7 @@ function App() {
               </select>
 
               <button className="btn-secondary" onClick={sendCityLoopToWhatsapp}>
-                <FiSend size={14} /> Enviar WhatsApp (cidade)
+                <FiSend size={14} /> Disparar WhatsApp (API)
               </button>
             </div>
 
@@ -3825,6 +3800,7 @@ function App() {
                 </table>
                 <small className="text-muted">
                   Exibição agrupada por cidade e por local + loop (mesmo local com mesmo loop vira uma linha). Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {formatSecondsClock(loopAuditData.targetSeconds || 180)}.
+                  {' '}Envio automático para vendedores ocorre semanalmente por cidade e pode ser disparado manualmente pelo botão acima.
                   {loopAuditData.lastSyncAt ? ` Última sincronização: ${new Date(loopAuditData.lastSyncAt).toLocaleString('pt-BR')}.` : ''}
                 </small>
               </div>

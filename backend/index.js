@@ -2234,6 +2234,7 @@ const originHttpsAgent = new https.Agent({ rejectUnauthorized: false });
 let originCookies = '';
 let loopSyncInProgress = false;
 let loopSyncLastRunAt = null;
+let loopCityNotifyInProgress = false;
 const ORIGIN_SCRAPE_EXCLUDED_IDS = new Set([318]);
 
 function isOriginScrapeExcluded(originId) {
@@ -2484,8 +2485,18 @@ setInterval(syncWithOrigin, SYNC_INTERVAL_MS);
 setTimeout(() => {
   syncLoopAuditsFromOrigin('startup').catch(() => {});
 }, 15000);
-setInterval(() => {
-  syncLoopAuditsFromOrigin('weekly').catch(() => {});
+setInterval(async () => {
+  try {
+    await syncLoopAuditsFromOrigin('weekly');
+    const notifyResult = await sendLoopCitySummariesToVendors({ trigger: 'weekly-auto' });
+    if (notifyResult.success) {
+      console.log(`Weekly loop city WhatsApp: ${notifyResult.sentMessages} mensagens enviadas`);
+    } else {
+      console.log(`Weekly loop city WhatsApp skipped: ${notifyResult.message || notifyResult.error || 'unknown reason'}`);
+    }
+  } catch (err) {
+    console.error('Weekly loop city notify error:', err.message);
+  }
 }, LOOP_SYNC_INTERVAL_MS);
 
 // Scrape /locais/monitores to get monitor -> location mapping
@@ -2661,6 +2672,130 @@ function classifyLoopRisk(loopSeconds, targetSeconds = LOOP_TARGET_SECONDS) {
     estimatedUsedSlots10,
     estimatedUsedSlots15
   };
+}
+
+function normalizeLoopCityName(rawCity, locationText = '') {
+  const toSlug = (value = '') => String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const toTitle = (value = '') => value
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+
+  const canonicalBySlug = {
+    bc: 'Balneario Camboriu',
+    'balneario camboriu': 'Balneario Camboriu',
+    itajai: 'Itajai',
+    londrina: 'Londrina',
+    maringa: 'Maringa'
+  };
+
+  const candidates = [];
+  const cityText = String(rawCity || '').trim();
+  if (cityText) {
+    const cityUfMatch = cityText.match(/([A-Za-zÀ-ÿ\s'\-]+)\s*\/[A-Za-z]{2}\b/i);
+    if (cityUfMatch && cityUfMatch[1]) candidates.push(cityUfMatch[1]);
+    const commaParts = cityText.split(',').map((part) => part.trim()).filter(Boolean);
+    if (commaParts.length > 1) candidates.push(commaParts[commaParts.length - 1]);
+    candidates.push(cityText);
+  }
+
+  const loc = String(locationText || '').trim();
+  const locationCity = loc.match(/-\s*([A-Za-zÀ-ÿ\s'\-]+)$/);
+  if (locationCity && locationCity[1]) candidates.push(locationCity[1]);
+
+  for (const candidate of candidates) {
+    const slug = toSlug(candidate);
+    if (!slug) continue;
+    const noUf = slug.replace(/\s+[a-z]{2}$/, '').trim();
+    if (canonicalBySlug[noUf]) return canonicalBySlug[noUf];
+    if (canonicalBySlug[slug]) return canonicalBySlug[slug];
+    return toTitle(noUf || slug);
+  }
+
+  return 'Sem cidade';
+}
+
+function buildLoopCityMessage(cityName, rows, targetSeconds = LOOP_TARGET_SECONDS) {
+  const lines = [
+    `*Relatorio de Loops - ${cityName}*`,
+    `Meta: ${Math.floor(targetSeconds / 60)}:${String(targetSeconds % 60).padStart(2, '0')}`,
+    ''
+  ];
+
+  rows.forEach((row) => {
+    const loopSeconds = Number.isFinite(row.loopSeconds) ? row.loopSeconds : 0;
+    const freeSeconds = Number.isFinite(row.remainingSeconds) ? row.remainingSeconds : 0;
+    const loopClock = `${String(Math.floor(loopSeconds / 60)).padStart(2, '0')}:${String(loopSeconds % 60).padStart(2, '0')}`;
+    const freeClock = `${String(Math.floor(freeSeconds / 60)).padStart(2, '0')}:${String(freeSeconds % 60).padStart(2, '0')}`;
+    const risk = String(row.riskLevel || 'unknown').toUpperCase();
+    lines.push(`- ${row.location || row.screenName || `Monitor ${row.originId}`}: loop ${loopClock} | ${freeClock} livre | risco ${risk}`);
+  });
+
+  return lines.join('\n');
+}
+
+async function sendLoopCitySummariesToVendors({ cityFilter = 'all', vendorId = null, trigger = 'manual' } = {}) {
+  if (loopCityNotifyInProgress) {
+    return { success: false, skipped: true, message: 'Loop city notification already in progress' };
+  }
+
+  loopCityNotifyInProgress = true;
+  try {
+    let vendorsWhere = { active: true };
+    if (vendorId) vendorsWhere = { ...vendorsWhere, id: vendorId };
+
+    const vendors = await Vendor.findAll({ where: vendorsWhere, order: [['name', 'ASC']] });
+    if (!vendors.length) return { success: false, message: 'Nenhum vendedor ativo encontrado para envio' };
+
+    const auditsRaw = await LoopAudit.findAll({
+      where: { originId: { [Op.notIn]: [...ORIGIN_SCRAPE_EXCLUDED_IDS] } },
+      order: [['riskScore', 'DESC'], ['loopSeconds', 'DESC']]
+    });
+
+    const groupedByCity = {};
+    for (const row of auditsRaw) {
+      if (isStaticLoopMediaByText(row.screenName, row.location)) continue;
+      const city = normalizeLoopCityName(row.city, row.location);
+      if (cityFilter !== 'all' && city !== cityFilter) continue;
+      if (!groupedByCity[city]) groupedByCity[city] = [];
+      groupedByCity[city].push(row);
+    }
+
+    const cityNames = Object.keys(groupedByCity).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    if (!cityNames.length) return { success: false, message: 'Nenhum dado de loop encontrado para o filtro selecionado' };
+
+    let sentMessages = 0;
+    for (const cityName of cityNames) {
+      const rows = groupedByCity[cityName];
+      const message = buildLoopCityMessage(cityName, rows, LOOP_TARGET_SECONDS);
+      for (const vendor of vendors) {
+        if (!vendor.phone) continue;
+        await sendNotification(message, vendor.phone);
+        sentMessages += 1;
+      }
+    }
+
+    return {
+      success: true,
+      trigger,
+      cityCount: cityNames.length,
+      vendorCount: vendors.length,
+      sentMessages,
+      cities: cityNames
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    loopCityNotifyInProgress = false;
+  }
 }
 
 async function scrapePremiumMonitorIds() {
@@ -2932,6 +3067,26 @@ app.post('/loops/sync', authenticateToken, requireAdmin, async (req, res) => {
   if (result.skipped) return res.status(202).json(result);
   if (!result.success) return res.status(500).json(result);
   res.json(result);
+});
+
+app.post('/loops/notify-city-summary', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const city = String(req.body?.city || 'all').trim() || 'all';
+    const vendorIdRaw = req.body?.vendorId;
+    const vendorId = vendorIdRaw && String(vendorIdRaw) !== 'all' ? parseInt(vendorIdRaw, 10) : null;
+
+    const result = await sendLoopCitySummariesToVendors({
+      cityFilter: city,
+      vendorId: Number.isInteger(vendorId) ? vendorId : null,
+      trigger: 'manual'
+    });
+
+    if (result.skipped) return res.status(202).json(result);
+    if (!result.success) return res.status(400).json(result);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Manual sync endpoint
