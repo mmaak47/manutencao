@@ -103,7 +103,7 @@ const mediaKitData = [
   {
     matchPattern: 'arnaldo',
     address: 'Av. Maringá, 430, Londrina/PR - CEP 86060-000',
-    operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: '17:30', operatingHoursEnd: '00:30', operatingDays: 'mon-sat',
     flowPeople: 19700, flowVehicles: null
   },
   {
@@ -113,11 +113,17 @@ const mediaKitData = [
     flowPeople: 9800, flowVehicles: null
   },
   {
-    matchPattern: 'posto alpha',
-    excludePattern: 'backlight',
+    matchPattern: 'posto alpha | conveni',
     address: 'Rod. Mabio Gonçalves Palhano, 1377, Londrina/PR - CEP 86055-585',
     operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
-    flowPeople: 36000, flowVehicles: 910000
+    flowPeople: 36000, flowVehicles: null
+  },
+  {
+    matchPattern: 'posto alpha | faixa',
+    altPatterns: ['posto alpha | led'],
+    address: 'Rod. Mabio Gonçalves Palhano, 1377, Londrina/PR - CEP 86055-585',
+    operatingHoursStart: '06:00', operatingHoursEnd: '23:00', operatingDays: 'all',
+    flowPeople: null, flowVehicles: 910000
   },
   {
     matchPattern: 'posto gastech',
@@ -129,27 +135,27 @@ const mediaKitData = [
     matchPattern: 'panetteria',
     excludePattern: 'backlight',
     address: 'Av. Ayrton Senna da Silva, 740, Londrina/PR',
-    operatingHoursStart: '06:30', operatingHoursEnd: '20:00', operatingDays: 'all',
+    operatingHoursStart: '06:30', operatingHoursEnd: '20:00', operatingDays: 'mon-sat',
     flowPeople: 17000, flowVehicles: null
   },
   {
     matchPattern: 'totem nykkon',
     altPatterns: ['nykkon'],
     address: 'Londrina/PR',
-    operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   {
     matchPattern: 'posto mediterr',
     address: 'Londrina/PR',
-    operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   {
     matchPattern: 'casar',
     altPatterns: ['casarão'],
     address: 'Londrina/PR',
-    operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   // BACKLIGHT / FRONTLIGHT - Londrina
@@ -163,7 +169,7 @@ const mediaKitData = [
     matchPattern: 'backlight] panetteria',
     altPatterns: ['backlight.*panetteria'],
     address: 'Av. Ayrton Senna da Silva, 740, Londrina/PR',
-    operatingHoursStart: '06:30', operatingHoursEnd: '20:00', operatingDays: 'all',
+    operatingHoursStart: '06:30', operatingHoursEnd: '20:00', operatingDays: 'mon-sat',
     flowPeople: 17000, flowVehicles: null
   },
   {
@@ -202,7 +208,7 @@ const mediaKitData = [
   {
     matchPattern: 'orla palhano',
     address: 'Londrina/PR',
-    operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   {
@@ -215,37 +221,37 @@ const mediaKitData = [
   {
     matchPattern: 'gil de abreu',
     address: 'Londrina/PR',
-    operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   {
     matchPattern: 'ldn grill',
     address: 'Londrina/PR',
-    operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   {
     matchPattern: 'led tripla face',
     address: 'Londrina/PR',
-    operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   {
     matchPattern: 'sr zanoni londrina',
     address: 'Londrina/PR',
-    operatingHoursStart: '11:00', operatingHoursEnd: '23:30', operatingDays: 'all',
-    flowPeople: 39100, flowVehicles: null
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
+    flowPeople: null, flowVehicles: null
   },
   {
     matchPattern: 'muffato madre',
     address: 'Londrina/PR',
-    operatingHoursStart: '08:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   {
     matchPattern: 'teste checkin',
     address: 'Londrina/PR',
-    operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   // ===== MARINGÁ =====
@@ -259,7 +265,7 @@ const mediaKitData = [
     matchPattern: 'zanoni maring',
     altPatterns: ['sr. zanoni maring', 'zanoni maringá'],
     address: 'Rua José do Patrocínio, 673 - Zona 04, Maringá/PR - CEP 87014-160',
-    operatingHoursStart: '11:00', operatingHoursEnd: '23:30', operatingDays: 'tue-sat',
+    operatingHoursStart: '11:00', operatingHoursEnd: '23:30', operatingDays: 'tue-sun',
     flowPeople: 39100, flowVehicles: null
   },
   {
@@ -341,7 +347,7 @@ const mediaKitData = [
     matchPattern: 'ed josé gonçalves',
     altPatterns: ['josé gonçalves', 'jose gonçalves', 'ed jose'],
     address: 'Maringá/PR',
-    operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
   // ===== BALNEÁRIO CAMBORIÚ / ITAJAÍ =====
@@ -379,13 +385,13 @@ const mediaKitData = [
   {
     matchPattern: 'london hub',
     address: 'Rua Franklin Máximo Pereira, 96 - Centro, Itajaí/SC - CEP 88302-020',
-    operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: 6300, flowVehicles: null
   },
   {
     matchPattern: 'martin luther',
     address: 'Av. Martin Luther, Balneário Camboriú/SC',
-    operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
+    operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: 362000
   }
 ];

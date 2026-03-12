@@ -400,6 +400,11 @@ function isWithinOperatingHours(screen) {
   // 24h operation
   if (startTime === 0 && endTime >= 23 * 60 + 59) return true;
   
+  // Handle overnight hours (e.g., 17:30 to 00:30)
+  if (endTime < startTime) {
+    return currentTime >= startTime || currentTime <= endTime;
+  }
+  
   return currentTime >= startTime && currentTime <= endTime;
 }
 
