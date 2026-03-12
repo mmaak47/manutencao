@@ -2605,6 +2605,13 @@ function parseLoopFromMonitorHtml(html) {
   return { loopSeconds: null, loopDisplay: null };
 }
 
+function isStaticLoopMediaByText(...values) {
+  const combined = values
+    .map((value) => String(value || '').toUpperCase())
+    .join(' ');
+  return combined.includes('FRONTLIGHT') || combined.includes('BACKLIGHT');
+}
+
 function classifyLoopRisk(loopSeconds, targetSeconds = LOOP_TARGET_SECONDS) {
   if (!Number.isFinite(loopSeconds)) {
     return {
@@ -2805,14 +2812,27 @@ async function syncLoopAuditsFromOrigin(reason = 'manual') {
 
       const screen = await Screen.findOne({ where: { originId } });
       const locInfo = locationMap[originId] || {};
+      const resolvedName = (screen && screen.name) || cycle.name || `Monitor ${originId}`;
+      const resolvedLocation = (screen && screen.location) || locInfo.location || cycle.vinculo || null;
+
+      // Static media (frontlight/backlight) must not participate in commercial loop/cota audit.
+      const isStaticLoopMedia =
+        (screen && screen.status === 'static') ||
+        isStaticLoopMediaByText(resolvedName, resolvedLocation, cycle.vinculo);
+
+      if (isStaticLoopMedia) {
+        await LoopAudit.destroy({ where: { originId } });
+        continue;
+      }
+
       const risk = classifyLoopRisk(cycle.loopSeconds, LOOP_TARGET_SECONDS);
       if (Number.isFinite(cycle.loopSeconds)) withLoop++; else missingLoop++;
 
       await LoopAudit.upsert({
         originId,
         screenId: screen ? screen.id : null,
-        screenName: (screen && screen.name) || cycle.name || `Monitor ${originId}`,
-        location: (screen && screen.location) || locInfo.location || cycle.vinculo || null,
+        screenName: resolvedName,
+        location: resolvedLocation,
         city: locInfo.city || (screen && screen.address) || null,
         loopSeconds: Number.isFinite(cycle.loopSeconds) ? cycle.loopSeconds : null,
         loopRaw: cycle.tempoCicloRaw || null,
@@ -2862,16 +2882,19 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
       where.riskLevel = risk;
     }
 
-    const items = await LoopAudit.findAll({
+    const itemsRaw = await LoopAudit.findAll({
       where,
       order: [['riskScore', 'DESC'], ['loopSeconds', 'DESC'], ['updatedAt', 'DESC']],
       limit
     });
 
-    const all = await LoopAudit.findAll({
+    const items = itemsRaw.filter((item) => !isStaticLoopMediaByText(item.screenName, item.location));
+
+    const allRaw = await LoopAudit.findAll({
       where: { originId: { [Op.notIn]: [...ORIGIN_SCRAPE_EXCLUDED_IDS] } },
-      attributes: ['riskLevel', 'loopSeconds', 'availableSlots10', 'availableSlots15']
+      attributes: ['riskLevel', 'loopSeconds', 'availableSlots10', 'availableSlots15', 'screenName', 'location']
     });
+    const all = allRaw.filter((item) => !isStaticLoopMediaByText(item.screenName, item.location));
     let persistedLastSyncAt = loopSyncLastRunAt;
     if (!persistedLastSyncAt) {
       const latest = await LoopAudit.findOne({
