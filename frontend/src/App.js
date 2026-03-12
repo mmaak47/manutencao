@@ -111,7 +111,7 @@ function App() {
   const [usersList, setUsersList] = useState([]);
   const [slaData, setSlaData] = useState(null);
   const [patterns, setPatterns] = useState([]);
-  const [loopAuditData, setLoopAuditData] = useState({ targetSeconds: 180, summary: null, items: [], lastSyncAt: null });
+  const [loopAuditData, setLoopAuditData] = useState({ targetSeconds: 180, summary: null, items: [], lastSyncAt: null, syncInProgress: false });
   const [loopAuditLoading, setLoopAuditLoading] = useState(false);
   const [loopAuditSyncing, setLoopAuditSyncing] = useState(false);
   const [checklistTemplates, setChecklistTemplates] = useState([]);
@@ -573,11 +573,12 @@ function App() {
         targetSeconds: payload.targetSeconds || 180,
         summary: payload.summary || null,
         items: Array.isArray(payload.items) ? payload.items : [],
-        lastSyncAt: payload.lastSyncAt || null
+        lastSyncAt: payload.lastSyncAt || null,
+        syncInProgress: Boolean(payload.syncInProgress)
       });
     } catch (err) {
       console.error('Error fetching loop audits:', err);
-      setLoopAuditData({ targetSeconds: 180, summary: null, items: [], lastSyncAt: null });
+      setLoopAuditData({ targetSeconds: 180, summary: null, items: [], lastSyncAt: null, syncInProgress: false });
     } finally {
       setLoopAuditLoading(false);
     }
@@ -587,8 +588,12 @@ function App() {
     if (!authToken || currentUser?.role !== 'admin') return;
     setLoopAuditSyncing(true);
     try {
-      await axios.post(`${API_BASE}/loops/sync`, {}, authConfig);
-      showAlert('Auditoria de loop atualizada com sucesso.', 'success');
+      const res = await axios.post(`${API_BASE}/loops/sync`, {}, authConfig);
+      if (res.status === 202 || res.data?.skipped) {
+        showAlert('A sincronização de loop já está em andamento. Aguarde alguns minutos.', 'info');
+      } else {
+        showAlert('Auditoria de loop atualizada com sucesso.', 'success');
+      }
       await fetchLoopAudits();
     } catch (err) {
       showAlert(err.response?.data?.error || 'Erro ao sincronizar loops.', 'error');
@@ -3487,8 +3492,8 @@ function App() {
               <FiRefreshCw size={14} /> Atualizar
             </button>
             {currentUser?.role === 'admin' && (
-              <button className="btn-secondary" onClick={syncLoopAudits} disabled={loopAuditSyncing}>
-                <FiClock size={14} /> {loopAuditSyncing ? 'Sincronizando Loop...' : 'Sincronizar Loops'}
+              <button className="btn-secondary" onClick={syncLoopAudits} disabled={loopAuditSyncing || loopAuditData.syncInProgress}>
+                <FiClock size={14} /> {loopAuditSyncing || loopAuditData.syncInProgress ? 'Sincronizando Loop...' : 'Sincronizar Loops'}
               </button>
             )}
           </div>

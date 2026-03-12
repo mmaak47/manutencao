@@ -2800,6 +2800,7 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
 
     res.json({
       targetSeconds: LOOP_TARGET_SECONDS,
+      syncInProgress: loopSyncInProgress,
       lastSyncAt: loopSyncLastRunAt,
       summary,
       items
@@ -2811,6 +2812,7 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
 
 app.post('/loops/sync', authenticateToken, requireAdmin, async (req, res) => {
   const result = await syncLoopAuditsFromOrigin('manual');
+  if (result.skipped) return res.status(202).json(result);
   if (!result.success) return res.status(500).json(result);
   res.json(result);
 });
