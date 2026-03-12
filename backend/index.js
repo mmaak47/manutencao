@@ -20,6 +20,7 @@ const ChecklistTemplate = require('./models/ChecklistTemplate');
 const NotificationConfig = require('./models/NotificationConfig');
 const Contract = require('./models/Contract');
 const Vendor = require('./models/Vendor');
+const TelemetrySnapshot = require('./models/TelemetrySnapshot');
 const { authenticateToken, requireAdmin, JWT_SECRET } = require('./middleware/auth');
 const backup = require('./config/backup');
 
@@ -888,6 +889,124 @@ app.patch('/screens/:id', authenticateToken, async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+
+// Screen diagnostics — historical telemetry analysis
+app.get('/screens/:id/diagnostics', authenticateToken, async (req, res) => {
+  try {
+    const screen = await Screen.findByPk(req.params.id);
+    if (!screen) return res.status(404).json({ error: 'Screen not found' });
+
+    const hours = parseInt(req.query.hours) || 24;
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const snapshots = await TelemetrySnapshot.findAll({
+      where: { screenId: screen.id, createdAt: { [require('sequelize').Op.gte]: since } },
+      order: [['createdAt', 'ASC']]
+    });
+
+    // Build time series
+    const timeSeries = snapshots.map(s => ({
+      t: s.createdAt,
+      cpuTemp: s.cpuTemp,
+      cpuUsage: s.cpuUsage,
+      diskPct: s.diskPct,
+      status: s.status,
+      uptimeRaw: s.uptimeRaw
+    }));
+
+    // Compute diagnostics
+    const onlineSnaps = snapshots.filter(s => s.cpuTemp != null);
+    const diagnostics = [];
+
+    if (onlineSnaps.length >= 2) {
+      // Temperature analysis
+      const temps = onlineSnaps.map(s => s.cpuTemp);
+      const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+      const maxTemp = Math.max(...temps);
+      const lastTemp = temps[temps.length - 1];
+      const recentTemps = temps.slice(-10);
+      const tempTrend = recentTemps.length >= 2 ? (recentTemps[recentTemps.length - 1] - recentTemps[0]) / recentTemps.length : 0;
+
+      if (maxTemp > 80) diagnostics.push({ type: 'danger', category: 'temperature', title: 'Temperatura crítica detectada', detail: `Máxima de ${maxTemp.toFixed(1)}°C — risco de dano ao hardware. Verificar ventilação e ambiente.` });
+      else if (avgTemp > 65) diagnostics.push({ type: 'warning', category: 'temperature', title: 'Temperatura elevada', detail: `Média de ${avgTemp.toFixed(1)}°C nas últimas ${hours}h. Player pode estar superaquecendo.` });
+      else diagnostics.push({ type: 'ok', category: 'temperature', title: 'Temperatura normal', detail: `Média ${avgTemp.toFixed(1)}°C, máx ${maxTemp.toFixed(1)}°C.` });
+
+      if (tempTrend > 1) diagnostics.push({ type: 'warning', category: 'temperature', title: 'Temperatura subindo', detail: `Tendência de +${tempTrend.toFixed(1)}°C por leitura nos últimos registros.` });
+
+      // CPU usage analysis
+      const cpus = onlineSnaps.filter(s => s.cpuUsage != null).map(s => s.cpuUsage);
+      if (cpus.length > 0) {
+        const avgCpu = cpus.reduce((a, b) => a + b, 0) / cpus.length;
+        const maxCpu = Math.max(...cpus);
+        const highCpuCount = cpus.filter(c => c > 80).length;
+        const highCpuPct = (highCpuCount / cpus.length) * 100;
+
+        if (highCpuPct > 50) diagnostics.push({ type: 'danger', category: 'cpu', title: 'CPU sobrecarregada', detail: `CPU acima de 80% em ${highCpuPct.toFixed(0)}% das leituras. Player pode travar ou reiniciar.` });
+        else if (avgCpu > 60) diagnostics.push({ type: 'warning', category: 'cpu', title: 'CPU elevada', detail: `Uso médio de ${avgCpu.toFixed(0)}%. Pode indicar processo travado.` });
+        else diagnostics.push({ type: 'ok', category: 'cpu', title: 'CPU normal', detail: `Uso médio ${avgCpu.toFixed(0)}%, máx ${maxCpu.toFixed(0)}%.` });
+      }
+
+      // Disk usage analysis
+      const disks = onlineSnaps.filter(s => s.diskPct != null).map(s => s.diskPct);
+      if (disks.length > 0) {
+        const lastDisk = disks[disks.length - 1];
+        const firstDisk = disks[0];
+        const diskGrowth = lastDisk - firstDisk;
+
+        if (lastDisk > 90) diagnostics.push({ type: 'danger', category: 'disk', title: 'Disco quase cheio', detail: `${lastDisk.toFixed(0)}% ocupado. Player pode parar de funcionar. Limpeza urgente necessária.` });
+        else if (lastDisk > 75) diagnostics.push({ type: 'warning', category: 'disk', title: 'Disco em alerta', detail: `${lastDisk.toFixed(0)}% ocupado. Programar limpeza.` });
+        else diagnostics.push({ type: 'ok', category: 'disk', title: 'Disco saudável', detail: `${lastDisk.toFixed(0)}% ocupado.` });
+
+        if (diskGrowth > 5 && hours >= 24) diagnostics.push({ type: 'warning', category: 'disk', title: 'Disco crescendo', detail: `+${diskGrowth.toFixed(1)}% nas últimas ${hours}h. Verificar logs ou cache acumulando.` });
+      }
+
+      // Uptime / stability analysis
+      const uptimes = onlineSnaps.filter(s => s.uptimeRaw).map(s => {
+        const d = s.uptimeRaw.match(/(\d+)\s*day/i);
+        const h = s.uptimeRaw.match(/(\d+)\s*hour/i);
+        const m = s.uptimeRaw.match(/(\d+)\s*min/i);
+        return (d ? parseInt(d[1]) * 1440 : 0) + (h ? parseInt(h[1]) * 60 : 0) + (m ? parseInt(m[1]) : 0);
+      });
+      if (uptimes.length >= 2) {
+        let reboots = 0;
+        for (let i = 1; i < uptimes.length; i++) {
+          if (uptimes[i] < uptimes[i - 1] - 5) reboots++;
+        }
+        if (reboots > 3) diagnostics.push({ type: 'danger', category: 'stability', title: 'Reinícios frequentes', detail: `${reboots} reinícios detectados nas últimas ${hours}h. Player instável — verificar fonte de energia e hardware.` });
+        else if (reboots > 0) diagnostics.push({ type: 'warning', category: 'stability', title: 'Reinício detectado', detail: `${reboots} reinício(s) nas últimas ${hours}h.` });
+        else diagnostics.push({ type: 'ok', category: 'stability', title: 'Estável', detail: `Sem reinícios detectados.` });
+      }
+    }
+
+    // Connectivity analysis (all snapshots, including offline)
+    if (snapshots.length > 0) {
+      const offlineCount = snapshots.filter(s => s.status === 'offline').length;
+      const offlinePct = (offlineCount / snapshots.length) * 100;
+      if (offlinePct > 30) diagnostics.push({ type: 'danger', category: 'connectivity', title: 'Conectividade crítica', detail: `Offline em ${offlinePct.toFixed(0)}% das leituras. Verificar rede/energia.` });
+      else if (offlinePct > 10) diagnostics.push({ type: 'warning', category: 'connectivity', title: 'Quedas de conexão', detail: `Offline em ${offlinePct.toFixed(0)}% das leituras.` });
+      else diagnostics.push({ type: 'ok', category: 'connectivity', title: 'Conexão estável', detail: `Online em ${(100 - offlinePct).toFixed(0)}% do tempo.` });
+    }
+
+    // Overall health score
+    const dangerCount = diagnostics.filter(d => d.type === 'danger').length;
+    const warnCount = diagnostics.filter(d => d.type === 'warning').length;
+    let health = 'healthy';
+    if (dangerCount > 0) health = 'critical';
+    else if (warnCount > 0) health = 'attention';
+
+    res.json({ screenId: screen.id, screenName: screen.name, hours, snapshotCount: snapshots.length, health, diagnostics, timeSeries });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cleanup old telemetry (keep 7 days)
+setInterval(async () => {
+  try {
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await TelemetrySnapshot.destroy({ where: { createdAt: { [require('sequelize').Op.lt]: cutoff } } });
+  } catch (err) { /* ignore */ }
+}, 6 * 60 * 60 * 1000); // every 6 hours
 
 // 4. EXPORT DATA ENDPOINT
 app.get('/screens/export/:format', authenticateToken, async (req, res) => {
@@ -2026,6 +2145,30 @@ async function syncWithOrigin() {
               await logStatusChange(screen, mon.status);
             }
           }
+
+          // Record telemetry snapshot
+          try {
+            const snap = { screenId: screen.id, status: mon.status };
+            if (mon.stats) {
+              const parsed = JSON.parse(mon.stats);
+              if (parsed.cpuTemp != null) snap.cpuTemp = parsed.cpuTemp;
+              if (parsed.cpuUsage) {
+                const pct = parseFloat(parsed.cpuUsage);
+                if (!isNaN(pct)) snap.cpuUsage = pct;
+              }
+              if (parsed.disk) {
+                const usedM = parsed.disk.match(/Used ([\d.]+)G/);
+                const availM = parsed.disk.match(/Avail ([\d.]+)G/);
+                const pctM = parsed.disk.match(/Pct:\s*(\d+)/);
+                if (usedM) snap.diskUsedGB = parseFloat(usedM[1]);
+                if (availM) snap.diskAvailGB = parseFloat(availM[1]);
+                if (pctM) snap.diskPct = parseFloat(pctM[1]);
+              }
+              if (parsed.uptime) snap.uptimeRaw = parsed.uptime;
+              if (parsed.appVersion) snap.appVersion = parsed.appVersion;
+            }
+            await TelemetrySnapshot.create(snap);
+          } catch (telErr) { /* skip telemetry errors */ }
         }
         // Note: we don't auto-create screens from origin — use the import endpoint for that
       } catch (err) {

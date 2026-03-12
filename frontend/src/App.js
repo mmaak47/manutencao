@@ -119,6 +119,9 @@ function App() {
   const [notifTestPhone, setNotifTestPhone] = useState('');
   const [editingScreenInfo, setEditingScreenInfo] = useState(false);
   const [screenInfoForm, setScreenInfoForm] = useState({});
+  const [diagnosticsData, setDiagnosticsData] = useState(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnosticsHours, setDiagnosticsHours] = useState(24);
 
   // Contracts & Vendors
   const [contracts, setContracts] = useState([]);
@@ -843,6 +846,7 @@ function App() {
       fetchNotes(selected.id);
       fetchEvents(selected.id);
       setActiveTab('details');
+      setDiagnosticsData(null);
       setTimeout(() => {
         detailPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
@@ -1065,6 +1069,17 @@ function App() {
     } catch (err) {
       showAlert('Erro ao salvar: ' + err.message, 'error');
     }
+  };
+
+  const fetchDiagnostics = async (screenId, hours = 24) => {
+    setDiagnosticsLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/screens/${screenId}/diagnostics?hours=${hours}`, authConfig);
+      setDiagnosticsData(res.data);
+    } catch (err) {
+      setDiagnosticsData(null);
+    }
+    setDiagnosticsLoading(false);
   };
 
   const toggleScreenSelection = (screenId) => {
@@ -2246,6 +2261,14 @@ function App() {
                 >
                   Historico
                 </button>
+                {selected.originId && (
+                  <button
+                    className={`tab-btn ${activeTab === 'diagnostics' ? 'active' : ''}`}
+                    onClick={() => { setActiveTab('diagnostics'); if (!diagnosticsData || diagnosticsData.screenId !== selected.id) fetchDiagnostics(selected.id, diagnosticsHours); }}
+                  >
+                    <FiActivity size={13} /> Diagnóstico
+                  </button>
+                )}
               </div>
 
               {activeTab === 'details' && (
@@ -2515,6 +2538,129 @@ function App() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'diagnostics' && (
+                <div className="diagnostics-tab">
+                  <div className="diagnostics-header">
+                    <h3><FiActivity size={16} /> Diagnóstico do Player</h3>
+                    <div className="diagnostics-period">
+                      {[6, 12, 24, 48, 72, 168].map(h => (
+                        <button key={h} className={`period-btn ${diagnosticsHours === h ? 'active' : ''}`}
+                          onClick={() => { setDiagnosticsHours(h); fetchDiagnostics(selected.id, h); }}>
+                          {h < 24 ? `${h}h` : `${h/24}d`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {diagnosticsLoading && <div className="diagnostics-loading">Carregando telemetria...</div>}
+
+                  {!diagnosticsLoading && diagnosticsData && diagnosticsData.snapshotCount === 0 && (
+                    <div className="diagnostics-empty">
+                      <FiClock size={32} />
+                      <p>Sem dados de telemetria ainda.</p>
+                      <small>Os dados serão coletados automaticamente a cada 2 minutos enquanto o player estiver online.</small>
+                    </div>
+                  )}
+
+                  {!diagnosticsLoading && diagnosticsData && diagnosticsData.snapshotCount > 0 && (
+                    <>
+                      <div className={`health-banner health-${diagnosticsData.health}`}>
+                        <span className="health-icon">{diagnosticsData.health === 'critical' ? '🔴' : diagnosticsData.health === 'attention' ? '🟡' : '🟢'}</span>
+                        <span className="health-text">
+                          {diagnosticsData.health === 'critical' ? 'Atenção Crítica' : diagnosticsData.health === 'attention' ? 'Requer Atenção' : 'Player Saudável'}
+                        </span>
+                        <small>{diagnosticsData.snapshotCount} leituras nas últimas {diagnosticsHours < 24 ? `${diagnosticsHours}h` : `${diagnosticsHours/24} dias`}</small>
+                      </div>
+
+                      <div className="diagnostics-cards">
+                        {diagnosticsData.diagnostics.map((d, i) => (
+                          <div key={i} className={`diag-card diag-${d.type}`}>
+                            <div className="diag-card-header">
+                              <span className="diag-icon">{d.type === 'danger' ? '⚠️' : d.type === 'warning' ? '⚡' : '✅'}</span>
+                              <strong>{d.title}</strong>
+                            </div>
+                            <p>{d.detail}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Mini Charts */}
+                      {diagnosticsData.timeSeries.length > 1 && (() => {
+                        const ts = diagnosticsData.timeSeries;
+                        const temps = ts.filter(p => p.cpuTemp != null);
+                        const cpus = ts.filter(p => p.cpuUsage != null);
+                        const disks = ts.filter(p => p.diskPct != null);
+
+                        const renderMiniChart = (data, getValue, label, unit, dangerThreshold, warnThreshold) => {
+                          if (data.length < 2) return null;
+                          const values = data.map(getValue);
+                          const min = Math.min(...values);
+                          const max = Math.max(...values);
+                          const range = max - min || 1;
+                          const w = 300, h = 80, pad = 2;
+                          const points = values.map((v, i) => {
+                            const x = pad + (i / (values.length - 1)) * (w - 2 * pad);
+                            const y = h - pad - ((v - min) / range) * (h - 2 * pad);
+                            return `${x},${y}`;
+                          }).join(' ');
+                          const lastVal = values[values.length - 1];
+                          const lineColor = lastVal > dangerThreshold ? 'var(--danger)' : lastVal > warnThreshold ? '#f59e0b' : 'var(--success)';
+
+                          return (
+                            <div className="mini-chart-card">
+                              <div className="mini-chart-header">
+                                <span>{label}</span>
+                                <strong style={{color: lineColor}}>{lastVal.toFixed(1)}{unit}</strong>
+                              </div>
+                              <svg viewBox={`0 0 ${w} ${h}`} className="mini-chart-svg">
+                                {dangerThreshold && (
+                                  <line x1={0} y1={h - pad - ((dangerThreshold - min) / range) * (h - 2 * pad)} x2={w} y2={h - pad - ((dangerThreshold - min) / range) * (h - 2 * pad)} stroke="var(--danger)" strokeWidth="0.5" strokeDasharray="4,4" />
+                                )}
+                                <polyline fill="none" stroke={lineColor} strokeWidth="1.5" points={points} />
+                              </svg>
+                              <div className="mini-chart-range">
+                                <small>{new Date(data[0].t).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>
+                                <small>{new Date(data[data.length-1].t).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>
+                              </div>
+                            </div>
+                          );
+                        };
+
+                        return (
+                          <div className="mini-charts-grid">
+                            {renderMiniChart(temps, d => d.cpuTemp, '🌡️ Temperatura', '°C', 80, 65)}
+                            {renderMiniChart(cpus, d => d.cpuUsage, '⚡ CPU', '%', 80, 60)}
+                            {renderMiniChart(disks, d => d.diskPct, '💾 Disco', '%', 90, 75)}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Status timeline */}
+                      {diagnosticsData.timeSeries.length > 1 && (() => {
+                        const ts = diagnosticsData.timeSeries;
+                        const w = 300, h = 16;
+                        const segW = w / ts.length;
+                        return (
+                          <div className="status-timeline-section">
+                            <div className="mini-chart-header"><span>📡 Status</span></div>
+                            <svg viewBox={`0 0 ${w} ${h}`} className="status-timeline-svg">
+                              {ts.map((p, i) => (
+                                <rect key={i} x={i * segW} y={0} width={Math.max(segW, 1)} height={h}
+                                  fill={p.status === 'online' ? 'var(--success)' : p.status === 'static' ? 'var(--accent)' : '#ef4444'} opacity={0.7} />
+                              ))}
+                            </svg>
+                            <div className="mini-chart-range">
+                              <small>{new Date(ts[0].t).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>
+                              <small>{new Date(ts[ts.length-1].t).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </>
+                  )}
                 </div>
               )}
 
