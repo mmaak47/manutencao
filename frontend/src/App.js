@@ -873,8 +873,16 @@ function App() {
     setPendingRegLoading(true);
     try {
       const res = await axios.get(`${API_BASE}/admin/registrations?status=${status}`, authConfig);
+      if (!Array.isArray(res.data)) {
+        console.error('Unexpected registrations payload:', res.data);
+        setPendingRegistrations([]);
+        return;
+      }
       setPendingRegistrations(res.data);
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      setPendingRegistrations([]);
+    }
     finally { setPendingRegLoading(false); }
   };
 
