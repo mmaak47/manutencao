@@ -1495,9 +1495,20 @@ app.post('/tickets', authenticateToken, async (req, res) => {
   try {
     const { screenId, title, description, category, priority, assignedTo, location, city, checklist } = req.body;
     if (!title) return res.status(400).json({ error: 'Título é obrigatório' });
+    
+    // Auto-populate location from screen if not provided
+    let finalLocation = location;
+    let finalCity = city;
+    if (screenId && !location) {
+      const screen = await Screen.findByPk(screenId);
+      if (screen) {
+        finalLocation = screen.address || screen.location || location;
+      }
+    }
+    
     const ticket = await Ticket.create({
       screenId: screenId || null, title, description, category: category || 'general',
-      priority: priority || 'medium', assignedTo, location, city, checklist,
+      priority: priority || 'medium', assignedTo, location: finalLocation, city: finalCity, checklist,
       createdBy: req.user.username, status: 'open'
     });
     await logAudit(req, 'create', 'ticket', ticket.id, { title });
@@ -1516,9 +1527,10 @@ app.post('/tickets', authenticateToken, async (req, res) => {
         const scr = await Screen.findByPk(screenId);
         if (scr) {
           msg += `\n🖥️ Tela: ${scr.name}`;
-          const addr = scr.address || scr.location;
-          if (addr) msg += `\n📍 ${addr}`;
+          if (scr.address) msg += `\n📍 ${scr.address}`;
         }
+      } else if (finalLocation) {
+        msg += `\n📍 ${finalLocation}`;
       }
       msg += `\n🕐 ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
       sendNotification(msg);
@@ -1602,9 +1614,20 @@ app.post('/schedules', authenticateToken, async (req, res) => {
   try {
     const { screenId, ticketId, title, description, scheduledDate, scheduledTime, assignedTo, location, city, recurrence, color } = req.body;
     if (!title || !scheduledDate) return res.status(400).json({ error: 'Título e data são obrigatórios' });
+    
+    // Auto-populate location from screen if not provided
+    let finalLocation = location;
+    let finalCity = city;
+    if (screenId && !location) {
+      const screen = await Screen.findByPk(screenId);
+      if (screen) {
+        finalLocation = screen.address || screen.location || location;
+      }
+    }
+    
     const schedule = await Schedule.create({
       screenId, ticketId, title, description, scheduledDate, scheduledTime,
-      assignedTo, location, city, recurrence: recurrence || 'none', color: color || '#E95D34',
+      assignedTo, location: finalLocation, city: finalCity, recurrence: recurrence || 'none', color: color || '#E95D34',
       createdBy: req.user.username
     });
     await logAudit(req, 'create', 'schedule', schedule.id, { title, scheduledDate });
@@ -1616,15 +1639,12 @@ app.post('/schedules', authenticateToken, async (req, res) => {
       msg += `\n\n📆 Data: ${new Date(scheduledDate + 'T12:00:00').toLocaleDateString('pt-BR')}`;
       if (scheduledTime) msg += ` às ${scheduledTime}`;
       if (assignedTo) msg += `\n👤 Responsável: ${assignedTo}`;
-      if (location) msg += `\n📍 ${location}`;
-      else if (screenId) {
-        const scr = await Screen.findByPk(screenId);
-        if (scr) {
-          const addr = scr.address || scr.location;
-          if (addr) msg += `\n📍 ${addr}`;
-        }
+      if (screenId) {
+        const screen = await Screen.findByPk(screenId);
+        if (screen) msg += `\n🖥️ Tela: ${screen.name}`;
       }
-      if (city) msg += ` — ${city}`;
+      if (finalLocation) msg += `\n📍 ${finalLocation}`;
+      if (finalCity) msg += ` — ${finalCity}`;
       sendNotification(msg);
     }
     res.status(201).json(schedule);

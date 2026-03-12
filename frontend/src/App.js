@@ -4018,13 +4018,9 @@ function App() {
                 </div>
                 <div className="form-group">
                   <label>Display</label>
-                  <select value={ticketForm.screenId} onChange={(e) => {
-                    const sid = e.target.value;
-                    const scr = screens.find(s => String(s.id) === sid);
-                    setTicketForm(p => ({ ...p, screenId: sid, location: scr?.address || scr?.location || p.location || '', city: scr?.location || p.city || '' }));
-                  }}>
+                  <select value={ticketForm.screenId} onChange={(e) => setTicketForm(p => ({ ...p, screenId: e.target.value }))}>
                     <option value="">Nenhum</option>
-                    {screens.map(s => <option key={s.id} value={s.id}>{s.name}{s.address ? ` — ${s.address}` : s.location ? ` - ${s.location}` : ''}</option>)}
+                    {screens.map(s => <option key={s.id} value={s.id}>{s.name} - {s.location}</option>)}
                   </select>
                 </div>
                 <div className="form-group">
@@ -4074,13 +4070,9 @@ function App() {
               <div className="form-row">
                 <div className="form-group">
                   <label>Display</label>
-                  <select value={scheduleForm.screenId} onChange={(e) => {
-                    const sid = e.target.value;
-                    const scr = screens.find(s => String(s.id) === sid);
-                    setScheduleForm(p => ({ ...p, screenId: sid, location: scr?.address || scr?.location || p.location || '' }));
-                  }}>
+                  <select value={scheduleForm.screenId} onChange={(e) => setScheduleForm(p => ({ ...p, screenId: e.target.value }))}>
                     <option value="">Nenhum</option>
-                    {screens.map(s => <option key={s.id} value={s.id}>{s.name}{s.address ? ` — ${s.address}` : s.location ? ` - ${s.location}` : ''}</option>)}
+                    {screens.map(s => <option key={s.id} value={s.id}>{s.name} - {s.location}</option>)}
                   </select>
                 </div>
                 <div className="form-group">
