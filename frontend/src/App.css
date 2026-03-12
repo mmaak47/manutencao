@@ -1091,6 +1091,66 @@
   letter-spacing: 0.5px;
 }
 
+.btn-edit-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: 'Montserrat', sans-serif;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-top: 4px;
+  transition: all 0.2s;
+}
+.btn-edit-info:hover { color: var(--accent); border-color: var(--accent); }
+
+.edit-info-section {
+  padding: 12px 20px 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+.edit-info-section h4 {
+  font-family: 'Poppins', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.edit-info-grid { display: flex; flex-direction: column; gap: 8px; }
+.edit-info-row { display: flex; gap: 8px; }
+.edit-info-field { display: flex; flex-direction: column; flex: 1; }
+.edit-info-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+  font-family: 'Montserrat', sans-serif;
+}
+.edit-info-field input,
+.edit-info-field select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: 'Montserrat', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.edit-info-field input:focus,
+.edit-info-field select:focus { border-color: var(--accent); }
+.edit-info-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .btn-status-toggle {
   padding: 8px 16px;
   border-radius: var(--radius-sm);

@@ -859,7 +859,7 @@ app.patch('/screens/:id', authenticateToken, async (req, res) => {
     const screen = await Screen.findByPk(req.params.id);
     if (!screen) return res.status(404).json({ error: 'Screen not found' });
     
-    const { priority, displayUrl, name, address, location } = req.body;
+    const { priority, displayUrl, name, address, location, operatingHoursStart, operatingHoursEnd, operatingDays, flowPeople, flowVehicles } = req.body;
     const updates = {};
     
     if (priority) {
@@ -873,6 +873,11 @@ app.patch('/screens/:id', authenticateToken, async (req, res) => {
     if (name) updates.name = name;
     if (address !== undefined) updates.address = address;
     if (location !== undefined) updates.location = location;
+    if (operatingHoursStart !== undefined) updates.operatingHoursStart = operatingHoursStart || null;
+    if (operatingHoursEnd !== undefined) updates.operatingHoursEnd = operatingHoursEnd || null;
+    if (operatingDays !== undefined) updates.operatingDays = operatingDays || null;
+    if (flowPeople !== undefined) updates.flowPeople = flowPeople === '' ? null : Number(flowPeople);
+    if (flowVehicles !== undefined) updates.flowVehicles = flowVehicles === '' ? null : Number(flowVehicles);
     
     if (Object.keys(updates).length > 0) {
       await screen.update(updates);

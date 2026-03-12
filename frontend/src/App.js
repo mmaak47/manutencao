@@ -117,6 +117,8 @@ function App() {
   const [ticketStats, setTicketStats] = useState(null);
   const [notifConfig, setNotifConfig] = useState(null);
   const [notifTestPhone, setNotifTestPhone] = useState('');
+  const [editingScreenInfo, setEditingScreenInfo] = useState(false);
+  const [screenInfoForm, setScreenInfoForm] = useState({});
 
   // Contracts & Vendors
   const [contracts, setContracts] = useState([]);
@@ -1038,6 +1040,30 @@ function App() {
       showAlert(`Prioridade atualizada para ${priority}!`, 'success');
     } catch (err) {
       showAlert('Erro ao atualizar prioridade: ' + err.message, 'error');
+    }
+  };
+
+  const startEditScreenInfo = () => {
+    setScreenInfoForm({
+      address: selected.address || '',
+      operatingHoursStart: selected.operatingHoursStart || '',
+      operatingHoursEnd: selected.operatingHoursEnd || '',
+      operatingDays: selected.operatingDays || '',
+      flowPeople: selected.flowPeople || '',
+      flowVehicles: selected.flowVehicles || '',
+    });
+    setEditingScreenInfo(true);
+  };
+
+  const saveScreenInfo = async () => {
+    try {
+      const res = await axios.patch(`${API_BASE}/screens/${selected.id}`, screenInfoForm, authConfig);
+      setScreens(screens.map(s => s.id === selected.id ? res.data : s));
+      setSelected(res.data);
+      setEditingScreenInfo(false);
+      showAlert('Informações atualizadas!', 'success');
+    } catch (err) {
+      showAlert('Erro ao salvar: ' + err.message, 'error');
     }
   };
 
@@ -2250,6 +2276,11 @@ function App() {
                           {selected.flowVehicles ? `${selected.flowVehicles.toLocaleString('pt-BR')} veículos` : ''}
                         </p>
                       )}
+                      {!editingScreenInfo && (
+                        <button onClick={startEditScreenInfo} className="btn-edit-info" title="Editar endereço, horários e fluxo">
+                          <FiEdit size={12} /> Editar Informações
+                        </button>
+                      )}
                       <p className="meta-info"><FiClock size={14} /> Criado: {new Date(selected.createdAt).toLocaleDateString('pt-BR')}</p>
                     </div>
                     <div className="header-actions">
@@ -2373,6 +2404,54 @@ function App() {
                       {selected.orientation && (
                         <p className="meta-info"><strong>Orientação:</strong> {selected.orientation === 'vertical' ? '📱 Vertical' : '🖥️ Horizontal'}</p>
                       )}
+                    </div>
+                  )}
+
+                  {editingScreenInfo && (
+                    <div className="edit-info-section">
+                      <h4><FiEdit size={14} /> Editar Informações</h4>
+                      <div className="edit-info-grid">
+                        <div className="edit-info-field">
+                          <label>Endereço</label>
+                          <input type="text" value={screenInfoForm.address} onChange={(e) => setScreenInfoForm({...screenInfoForm, address: e.target.value})} placeholder="Endereço do ponto" />
+                        </div>
+                        <div className="edit-info-row">
+                          <div className="edit-info-field">
+                            <label>Início</label>
+                            <input type="time" value={screenInfoForm.operatingHoursStart} onChange={(e) => setScreenInfoForm({...screenInfoForm, operatingHoursStart: e.target.value})} />
+                          </div>
+                          <div className="edit-info-field">
+                            <label>Fim</label>
+                            <input type="time" value={screenInfoForm.operatingHoursEnd} onChange={(e) => setScreenInfoForm({...screenInfoForm, operatingHoursEnd: e.target.value})} />
+                          </div>
+                          <div className="edit-info-field">
+                            <label>Dias</label>
+                            <select value={screenInfoForm.operatingDays} onChange={(e) => setScreenInfoForm({...screenInfoForm, operatingDays: e.target.value})}>
+                              <option value="">Sem definição</option>
+                              <option value="all">Todos os dias</option>
+                              <option value="mon-fri">Seg-Sex</option>
+                              <option value="mon-sat">Seg-Sáb</option>
+                              <option value="tue-sun">Ter-Dom</option>
+                              <option value="tue-sat">Ter-Sáb</option>
+                              <option value="mon-sun-except-wed">Exceto Quarta</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="edit-info-row">
+                          <div className="edit-info-field">
+                            <label>Fluxo Pessoas</label>
+                            <input type="number" value={screenInfoForm.flowPeople} onChange={(e) => setScreenInfoForm({...screenInfoForm, flowPeople: e.target.value})} placeholder="0" />
+                          </div>
+                          <div className="edit-info-field">
+                            <label>Fluxo Veículos</label>
+                            <input type="number" value={screenInfoForm.flowVehicles} onChange={(e) => setScreenInfoForm({...screenInfoForm, flowVehicles: e.target.value})} placeholder="0" />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="edit-info-actions">
+                        <button className="btn-primary" onClick={saveScreenInfo}>Salvar</button>
+                        <button className="btn-secondary" onClick={() => setEditingScreenInfo(false)}>Cancelar</button>
+                      </div>
                     </div>
                   )}
 
