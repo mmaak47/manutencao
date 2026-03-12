@@ -2558,6 +2558,36 @@ function parseLoopSeconds(rawValue) {
   return Math.max(0, Math.round(num));
 }
 
+function parseClockToSeconds(clockValue) {
+  if (!clockValue) return null;
+  const m = String(clockValue).trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const minutes = parseInt(m[1], 10);
+  const seconds = parseInt(m[2], 10);
+  if (!Number.isInteger(minutes) || !Number.isInteger(seconds) || seconds > 59) return null;
+  return (minutes * 60) + seconds;
+}
+
+function parseLoopFromMonitorHtml(html) {
+  const body = String(html || '');
+  if (!body) return { loopSeconds: null, loopDisplay: null };
+
+  // Prefer the clock nearest to the "CICLO" badge (e.g. 02:07 CICLO)
+  const cicloIdx = body.toUpperCase().indexOf('CICLO');
+  if (cicloIdx >= 0) {
+    const start = Math.max(0, cicloIdx - 240);
+    const snippet = body.substring(start, cicloIdx + 120);
+    const clocks = snippet.match(/\b\d{1,2}:\d{2}\b/g);
+    if (clocks && clocks.length) {
+      const candidate = clocks[clocks.length - 1];
+      const seconds = parseClockToSeconds(candidate);
+      if (Number.isFinite(seconds)) return { loopSeconds: seconds, loopDisplay: candidate };
+    }
+  }
+
+  return { loopSeconds: null, loopDisplay: null };
+}
+
 function classifyLoopRisk(loopSeconds, targetSeconds = LOOP_TARGET_SECONDS) {
   if (!Number.isFinite(loopSeconds)) {
     return {
@@ -2684,14 +2714,48 @@ async function fetchOriginMonitorCycle(originId) {
   const tempoCicloRaw = String($('[name="tempo_ciclo"]').val() || '').trim();
   const nome = String($('[name="nome"]').val() || '').trim();
   const vinculoText = String($('[name="vinculo"] option:selected').text() || '').trim();
+  const formLoopSeconds = parseLoopSeconds(tempoCicloRaw);
+
+  // Also try scraping the monitor page itself to read the current loop clock (MM:SS)
+  let monitorLoopSeconds = null;
+  let monitorLoopDisplay = null;
+  try {
+    let monitorResp = await axios.get(`${ORIGIN_BASE}/campanhas/monitor/${originId}`, {
+      headers: { Cookie: originCookies },
+      timeout: 20000,
+      httpsAgent: originHttpsAgent,
+      validateStatus: () => true
+    });
+
+    if (!monitorResp.data || String(monitorResp.data).includes('action="/login/verifica"')) {
+      const loggedIn = await originLogin();
+      if (loggedIn) {
+        monitorResp = await axios.get(`${ORIGIN_BASE}/campanhas/monitor/${originId}`, {
+          headers: { Cookie: originCookies },
+          timeout: 20000,
+          httpsAgent: originHttpsAgent,
+          validateStatus: () => true
+        });
+      }
+    }
+
+    const parsedMonitorLoop = parseLoopFromMonitorHtml(monitorResp.data || '');
+    monitorLoopSeconds = parsedMonitorLoop.loopSeconds;
+    monitorLoopDisplay = parsedMonitorLoop.loopDisplay;
+  } catch (err) {
+    // keep fallback from monitor form tempo_ciclo
+  }
+
+  const chosenLoopSeconds = Number.isFinite(monitorLoopSeconds) ? monitorLoopSeconds : formLoopSeconds;
+  const chosenLoopRaw = monitorLoopDisplay || tempoCicloRaw;
 
   return {
     originId,
-    tempoCicloRaw,
-    loopSeconds: parseLoopSeconds(tempoCicloRaw),
+    tempoCicloRaw: chosenLoopRaw,
+    loopSeconds: chosenLoopSeconds,
     name: nome,
     vinculo: vinculoText,
-    sourceUrl: `${ORIGIN_BASE}/locais/adicionar-monitor/id/${originId}`
+    sourceUrl: `${ORIGIN_BASE}/campanhas/monitor/${originId}`
   };
 }
 

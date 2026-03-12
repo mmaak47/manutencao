@@ -2002,6 +2002,12 @@ function App() {
     reportWindow.document.close();
     reportWindow.focus();
   };
+  const formatSecondsClock = (seconds) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return '-';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   if (!authToken) {
     // ── SELF-REGISTER VIEW ──
@@ -3563,6 +3569,7 @@ function App() {
                       <th>Monitor</th>
                       <th>Local</th>
                       <th>Loop Atual</th>
+                      <th>Tempo Livre</th>
                       <th>Risco</th>
                       <th>Cotas 10s</th>
                       <th>Cotas 15s</th>
@@ -3577,7 +3584,12 @@ function App() {
                           <div className="loop-origin-id">ID origem: {row.originId}</div>
                         </td>
                         <td>{row.location || '-'}</td>
-                        <td>{Number.isFinite(row.loopSeconds) ? `${row.loopSeconds}s` : '-'}</td>
+                        <td>{formatSecondsClock(row.loopSeconds)}</td>
+                        <td>
+                          {Number.isFinite(row.remainingSeconds)
+                            ? `${formatSecondsClock(row.remainingSeconds)} livre${row.remainingSeconds < 60 ? ' (< 1 min)' : ''}`
+                            : '-'}
+                        </td>
                         <td>
                           <span className={`loop-risk-badge ${row.riskLevel || 'unknown'}`}>
                             {row.riskLevel || 'unknown'}
@@ -3590,7 +3602,7 @@ function App() {
                   </tbody>
                 </table>
                 <small className="text-muted">
-                  Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {loopAuditData.targetSeconds || 180}s.
+                  Ordem de prioridade: mais preocupante para menos preocupante. Meta de loop: {formatSecondsClock(loopAuditData.targetSeconds || 180)}.
                   {loopAuditData.lastSyncAt ? ` Última sincronização: ${new Date(loopAuditData.lastSyncAt).toLocaleString('pt-BR')}.` : ''}
                 </small>
               </div>
