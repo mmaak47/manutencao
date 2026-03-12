@@ -1008,6 +1008,61 @@ setInterval(async () => {
   } catch (err) { /* ignore */ }
 }, 6 * 60 * 60 * 1000); // every 6 hours
 
+// Generate route link for screen address
+app.get('/screens/:id/route-link', authenticateToken, async (req, res) => {
+  try {
+    const screen = await Screen.findByPk(req.params.id);
+    if (!screen) return res.status(404).json({ error: 'Screen not found' });
+    
+    const addr = screen.address || screen.location;
+    if (!addr) return res.status(400).json({ error: 'Screen has no address' });
+    
+    // Google Maps route link: opens Maps with current location as origin and screen address as destination
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`;
+    const appleMapsUrl = `maps://maps.apple.com/?daddr=${encodeURIComponent(addr)}&dirflg=d`;
+    
+    res.json({ 
+      address: addr, 
+      screenName: screen.name,
+      googleMapsUrl: mapsUrl, 
+      appleMapsUrl: appleMapsUrl,
+      shortUrl: `/route/${screen.id}` 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Redirect route link (for shorter URLs in messages)
+app.get('/route/:screenId', async (req, res) => {
+  try {
+    const screen = await Screen.findByPk(req.params.screenId);
+    if (!screen || !screen.address) {
+      return res.status(404).send('<h1>Endereço não encontrado</h1>');
+    }
+    const addr = screen.address || screen.location;
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`;
+    res.redirect(mapsUrl);
+  } catch (err) {
+    res.status(500).send('<h1>Erro ao gerar rota</h1>');
+  }
+});
+
+// Generate route link for any address
+app.post('/route-link', authenticateToken, (req, res) => {
+  try {
+    const { address } = req.body;
+    if (!address) return res.status(400).json({ error: 'Address is required' });
+    
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`;
+    const appleMapsUrl = `maps://maps.apple.com/?daddr=${encodeURIComponent(address)}&dirflg=d`;
+    
+    res.json({ address, googleMapsUrl: mapsUrl, appleMapsUrl: appleMapsUrl });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 4. EXPORT DATA ENDPOINT
 app.get('/screens/export/:format', authenticateToken, async (req, res) => {
   try {
@@ -1350,6 +1405,10 @@ async function generateAutomatedAlerts() {
               msg += `\n🕒 Última conexão: ${new Date(screen.lastHeartbeat).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
               if (prio) msg += `\n${prio}`;
               if (offlineHours >= 24) msg += `\n\n‼️ *Atenção: mais de 24h offline*`;
+              if (addr) {
+                const routeUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}&travelmode=driving`;
+                msg += `\n\n🗺️ *Abrir Rota:* ${routeUrl}`;
+              }
               sendNotification(msg);
             }
           }
@@ -1533,6 +1592,16 @@ app.post('/tickets', authenticateToken, async (req, res) => {
         msg += `\n📍 ${finalLocation}`;
       }
       msg += `\n🕐 ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
+      if (screenId) {
+        const scr = await Screen.findByPk(screenId);
+        if (scr && scr.address) {
+          const mapsUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(scr.address);
+          msg += `\n\n🗺️ *Abrir Rota:* ${mapsUrl}`;
+        }
+      } else if (finalLocation) {
+        const mapsUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(finalLocation);
+        msg += `\n\n🗺️ *Abrir Rota:* ${mapsUrl}`;
+      }
       sendNotification(msg);
     }
     res.status(201).json(ticket);
@@ -1645,6 +1714,16 @@ app.post('/schedules', authenticateToken, async (req, res) => {
       }
       if (finalLocation) msg += `\n📍 ${finalLocation}`;
       if (finalCity) msg += ` — ${finalCity}`;
+      if (screenId) {
+        const screen = await Screen.findByPk(screenId);
+        if (screen && screen.address) {
+          const mapsUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(screen.address);
+          msg += `\n\n🗺️ *Abrir Rota:* ${mapsUrl}`;
+        }
+      } else if (finalLocation) {
+        const mapsUrl = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(finalLocation);
+        msg += `\n\n🗺️ *Abrir Rota:* ${mapsUrl}`;
+      }
       sendNotification(msg);
     }
     res.status(201).json(schedule);
