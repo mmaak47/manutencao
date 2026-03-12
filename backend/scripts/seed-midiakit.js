@@ -120,7 +120,7 @@ const mediaKitData = [
   },
   {
     matchPattern: 'posto alpha | faixa',
-    altPatterns: ['posto alpha | led'],
+    altPatterns: ['re:posto alpha \\| led intermidia'],
     address: 'Rod. Mabio Gonçalves Palhano, 1377, Londrina/PR - CEP 86055-585',
     operatingHoursStart: '06:00', operatingHoursEnd: '23:00', operatingDays: 'all',
     flowPeople: null, flowVehicles: 910000
@@ -295,6 +295,7 @@ const mediaKitData = [
   },
   {
     matchPattern: 'new tower',
+    excludePattern: 'nyc palhano',
     altPatterns: ['panorâmico', 'torre 01 ', 'torre 02 '],
     address: 'Av. Duque de Caxias, 882 - Zona 07, Maringá/PR - CEP 87020-025',
     operatingHoursStart: '06:00', operatingHoursEnd: '22:00', operatingDays: 'all',
@@ -500,4 +501,13 @@ async function seed() {
   }
 }
 
-seed();
+if (require.main === module) {
+  seed();
+}
+
+module.exports = {
+  mediaKitData,
+  flowToPriority,
+  matchScreen,
+  seed
+};

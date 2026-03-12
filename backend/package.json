@@ -5,7 +5,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "reset-admin": "node scripts/reset-admin.js"
+    "reset-admin": "node scripts/reset-admin.js",
+    "audit:midiakit": "node scripts/audit-midiakit-mapping.js",
+    "audit:midiakit:fix": "node scripts/audit-midiakit-mapping.js --fix"
   },
   "dependencies": {
     "axios": "^1.4.0",
