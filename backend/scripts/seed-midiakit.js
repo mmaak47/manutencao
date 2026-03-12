@@ -226,7 +226,7 @@ const mediaKitData = [
   },
   {
     matchPattern: 'ldn grill',
-    address: 'Londrina/PR',
+    address: 'Av. Higienópolis, 964 - Centro, Londrina/PR - CEP 86020-080',
     operatingHoursStart: null, operatingHoursEnd: null, operatingDays: null,
     flowPeople: null, flowVehicles: null
   },
