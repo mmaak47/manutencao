@@ -2786,6 +2786,14 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
     });
 
     const all = await LoopAudit.findAll({ attributes: ['riskLevel', 'loopSeconds', 'availableSlots10', 'availableSlots15'] });
+    let persistedLastSyncAt = loopSyncLastRunAt;
+    if (!persistedLastSyncAt) {
+      const latest = await LoopAudit.findOne({
+        attributes: ['lastCheckedAt'],
+        order: [['lastCheckedAt', 'DESC']]
+      });
+      if (latest && latest.lastCheckedAt) persistedLastSyncAt = latest.lastCheckedAt;
+    }
     const summary = {
       total: all.length,
       critical: all.filter((i) => i.riskLevel === 'critical').length,
@@ -2801,7 +2809,7 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
     res.json({
       targetSeconds: LOOP_TARGET_SECONDS,
       syncInProgress: loopSyncInProgress,
-      lastSyncAt: loopSyncLastRunAt,
+      lastSyncAt: persistedLastSyncAt,
       summary,
       items
     });
