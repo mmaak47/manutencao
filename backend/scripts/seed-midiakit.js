@@ -167,7 +167,7 @@ const mediaKitData = [
   },
   {
     matchPattern: 'backlight] panetteria',
-    altPatterns: ['backlight.*panetteria'],
+    altPatterns: ['re:backlight.*panetteria'],
     address: 'Av. Ayrton Senna da Silva, 740, Londrina/PR',
     operatingHoursStart: '06:30', operatingHoursEnd: '20:00', operatingDays: 'mon-sat',
     flowPeople: 17000, flowVehicles: null
@@ -186,21 +186,21 @@ const mediaKitData = [
   },
   {
     matchPattern: 'joaquim de matos',
-    altPatterns: ['joaquim.*matos.*barreto'],
+    altPatterns: ['re:joaquim.*matos.*barreto'],
     address: 'Av. Joaquim de Matos Barreto (esq. Av. Maringá), Londrina/PR',
     operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
     flowPeople: 18000, flowVehicles: null
   },
   {
     matchPattern: 'celso garcia',
-    altPatterns: ['rod.*celso'],
+    altPatterns: ['re:rod.*celso'],
     address: 'Av. Celso Garcia Cid, Londrina/PR',
     operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
     flowPeople: 26000, flowVehicles: null
   },
   {
     matchPattern: 'frontlight] strassberg',
-    altPatterns: ['frontlight.*strassberg'],
+    altPatterns: ['re:frontlight.*strassberg'],
     address: 'Rod. Celso Garcia Cid, Km 401, S/N - PR 323, Londrina/PR - CEP 86105-000',
     operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
     flowPeople: 26000, flowVehicles: null
@@ -213,7 +213,7 @@ const mediaKitData = [
   },
   {
     matchPattern: 'backlight] posto alpha',
-    altPatterns: ['backlight.*posto alpha'],
+    altPatterns: ['re:backlight.*posto alpha'],
     address: 'Rod. Mabio Gonçalves Palhano, 1377, Londrina/PR - CEP 86055-585',
     operatingHoursStart: '00:00', operatingHoursEnd: '23:59', operatingDays: 'all',
     flowPeople: 36000, flowVehicles: 910000
@@ -414,8 +414,8 @@ function matchScreen(screenName, entry) {
   if (name.includes(entry.matchPattern.toLowerCase())) return true;
   if (entry.altPatterns) {
     for (const alt of entry.altPatterns) {
-      if (alt.includes('.*') || alt.includes('|')) {
-        if (new RegExp(alt, 'i').test(screenName)) return true;
+      if (alt.startsWith('re:')) {
+        if (new RegExp(alt.slice(3), 'i').test(screenName)) return true;
       } else {
         if (name.includes(alt.toLowerCase())) return true;
       }
