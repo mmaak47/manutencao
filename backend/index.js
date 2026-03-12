@@ -2813,7 +2813,7 @@ async function syncLoopAuditsFromOrigin(reason = 'manual') {
         screenId: screen ? screen.id : null,
         screenName: (screen && screen.name) || cycle.name || `Monitor ${originId}`,
         location: (screen && screen.location) || locInfo.location || cycle.vinculo || null,
-        city: (screen && screen.address) || locInfo.city || null,
+        city: locInfo.city || (screen && screen.address) || null,
         loopSeconds: Number.isFinite(cycle.loopSeconds) ? cycle.loopSeconds : null,
         loopRaw: cycle.tempoCicloRaw || null,
         targetSeconds: LOOP_TARGET_SECONDS,

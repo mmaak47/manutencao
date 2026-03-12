@@ -135,6 +135,8 @@ function App() {
   const [vendorForm, setVendorForm] = useState({ name: '', phone: '', email: '' });
   const [editingVendor, setEditingVendor] = useState(null);
   const [contractsTab, setContractsTab] = useState('contracts');
+  const [loopCityFilter, setLoopCityFilter] = useState('all');
+  const [loopVendorFilter, setLoopVendorFilter] = useState('all');
 
   const userMenuRef = useRef(null);
   const reportsLoadedRef = useRef(false);
@@ -1609,8 +1611,10 @@ function App() {
     try {
       const res = await axios.get(`${API_BASE}/vendors`, authConfig);
       setVendors(res.data);
+      return Array.isArray(res.data) ? res.data : [];
     } catch (err) {
       console.error('Error fetching vendors:', err);
+      return [];
     }
   };
 
@@ -2009,6 +2013,23 @@ function App() {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  const normalizeCityName = (rawCity, locationName) => {
+    const cityText = String(rawCity || '').trim();
+    if (cityText) {
+      const fromUfPattern = cityText.match(/,\s*([^,\/\-]+)\s*\/[A-Za-z]{2}\b/i);
+      if (fromUfPattern && fromUfPattern[1]) return fromUfPattern[1].trim();
+
+      const justCity = cityText.match(/^\s*([A-Za-zÀ-ÿ\s'\-]+)\s*$/);
+      if (justCity && justCity[1]) return justCity[1].trim();
+    }
+
+    const locationText = String(locationName || '').trim();
+    const locationCity = locationText.match(/-\s*([A-Za-zÀ-ÿ\s'\-]+)$/);
+    if (locationCity && locationCity[1]) return locationCity[1].trim();
+
+    return cityText || 'Sem cidade';
+  };
+
   const groupedLoopItems = (() => {
     const groupedMap = new Map();
 
@@ -2022,7 +2043,7 @@ function App() {
         groupedMap.set(groupKey, {
           ...row,
           location: locationLabel,
-          city: String(row.city || '').trim() || 'Sem cidade',
+          city: normalizeCityName(row.city, locationLabel),
           monitorCount: 1,
           originIds: [row.originId],
           monitorNames: [row.screenName || `Monitor ${row.originId}`]
@@ -2046,11 +2067,18 @@ function App() {
     });
   })();
 
+  const loopCityOptions = Array.from(new Set(groupedLoopItems.map((row) => row.city || 'Sem cidade')))
+    .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
+
+  const filteredLoopItems = groupedLoopItems.filter((row) => (
+    loopCityFilter === 'all' || (row.city || 'Sem cidade') === loopCityFilter
+  ));
+
   const groupedLoopItemsWithCityHeaders = (() => {
     const rows = [];
     let lastCity = null;
 
-    groupedLoopItems.slice(0, 40).forEach((row) => {
+    filteredLoopItems.slice(0, 40).forEach((row) => {
       const cityLabel = row.city || 'Sem cidade';
       if (cityLabel !== lastCity) {
         rows.push({ isCityHeader: true, city: cityLabel, key: `city-${cityLabel}` });
@@ -2061,6 +2089,58 @@ function App() {
 
     return rows;
   })();
+
+  const buildLoopCityWhatsappMessage = (cityName, rows) => {
+    const lines = [
+      `Relatório de loops - ${cityName}`,
+      `Meta: ${formatSecondsClock(loopAuditData.targetSeconds || 180)}`,
+      ''
+    ];
+
+    rows.forEach((row) => {
+      const loop = formatSecondsClock(row.loopSeconds);
+      const free = Number.isFinite(row.remainingSeconds)
+        ? `${formatSecondsClock(row.remainingSeconds)} livre${row.remainingSeconds < 60 ? ' (<1 min)' : ''}`
+        : '-';
+      lines.push(`- ${row.location}: loop ${loop} | ${free} | risco ${String(row.riskLevel || 'unknown').toUpperCase()}`);
+    });
+
+    return lines.join('\n');
+  };
+
+  const sendCityLoopToWhatsapp = async () => {
+    if (loopCityFilter === 'all') {
+      showAlert('Selecione uma cidade para enviar no WhatsApp.', 'warning');
+      return;
+    }
+
+    const cityRows = filteredLoopItems.filter((row) => (row.city || 'Sem cidade') === loopCityFilter);
+    if (!cityRows.length) {
+      showAlert('Não há dados de loop para a cidade selecionada.', 'warning');
+      return;
+    }
+
+    const vendorPool = vendors.length ? vendors : await fetchVendors();
+
+    const targetVendors = (loopVendorFilter === 'all'
+      ? vendorPool.filter((v) => v.active !== false)
+      : vendorPool.filter((v) => String(v.id) === String(loopVendorFilter) && v.active !== false)
+    );
+
+    if (!targetVendors.length) {
+      showAlert('Nenhum vendedor ativo selecionado para envio.', 'warning');
+      return;
+    }
+
+    const message = buildLoopCityWhatsappMessage(loopCityFilter, cityRows);
+    for (const vendor of targetVendors) {
+      const waBase = getWhatsappLink(vendor.phone || '');
+      if (!waBase || waBase === '#') continue;
+      window.open(`${waBase}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+    }
+
+    showAlert(`Mensagem da cidade ${loopCityFilter} preparada para ${targetVendors.length} vendedor(es).`, 'success');
+  };
 
   if (!authToken) {
     // ── SELF-REGISTER VIEW ──
@@ -3609,6 +3689,28 @@ function App() {
               <div className="an-card" style={{ borderLeft: '3px solid #f59e0b' }}><div className="an-val">{loopAuditData.summary?.high || 0}</div><div className="an-label">Alto Risco</div></div>
               <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable10 || 0}</div><div className="an-label">Cotas 10s Disponíveis</div></div>
               <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable15 || 0}</div><div className="an-label">Cotas 15s Disponíveis</div></div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', margin: '8px 0 12px' }}>
+              <label style={{ fontSize: '12px', color: '#64748b' }}>Cidade</label>
+              <select value={loopCityFilter} onChange={(e) => setLoopCityFilter(e.target.value)} style={{ minWidth: '200px' }}>
+                <option value="all">Todas as cidades</option>
+                {loopCityOptions.map((city) => (
+                  <option key={city} value={city}>{city}</option>
+                ))}
+              </select>
+
+              <label style={{ fontSize: '12px', color: '#64748b' }}>Vendedor</label>
+              <select value={loopVendorFilter} onChange={(e) => setLoopVendorFilter(e.target.value)} style={{ minWidth: '220px' }}>
+                <option value="all">Todos os vendedores ativos</option>
+                {vendors.filter((v) => v.active !== false).map((vendor) => (
+                  <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+                ))}
+              </select>
+
+              <button className="btn-secondary" onClick={sendCityLoopToWhatsapp}>
+                <FiSend size={14} /> Enviar WhatsApp (cidade)
+              </button>
             </div>
 
             {groupedLoopItems.length === 0 ? (
