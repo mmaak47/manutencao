@@ -2170,7 +2170,10 @@ function App() {
                           </span>
                           <div className="screen-row-info">
                             <strong>{s.name}</strong>
-                            <small>{s.status === 'online' ? 'Conectado' : s.status === 'static' ? 'Estático' : s.status === 'not_installed' ? 'Não Instalado' : 'Desconectado'} • {s.displayId ? `ID: ${s.displayId}` : `DB ID: ${s.id}`}</small>
+                            <small>
+                              {s.status === 'online' ? 'Conectado' : s.status === 'static' ? 'Estático' : s.status === 'not_installed' ? 'Não Instalado' : 'Desconectado'} • {s.displayId ? `ID: ${s.displayId}` : `DB ID: ${s.id}`}
+                              {s.outsideOperatingHours && s.status === 'offline' && ' • 🕐 Fora do horário'}
+                            </small>
                           </div>
                         </div>
                         <div className="screen-row-status">
@@ -2224,11 +2227,27 @@ function App() {
                   <div className="detail-header">
                     <div className="header-info">
                       <h2>{selected.name}</h2>
-                      {(() => { const locAddr = getLocationData(selected.location)?.address; return locAddr ? <p className="meta-address">{locAddr}</p> : null; })()}
+                      {selected.address && <p className="meta-address"><FiMapPin size={14} /> {selected.address}</p>}
+                      {!selected.address && (() => { const locAddr = getLocationData(selected.location)?.address; return locAddr ? <p className="meta-address">{locAddr}</p> : null; })()}
                       {selected.displayId && <p className="meta-info"><strong>ID Display:</strong> {selected.displayId}</p>}
                       {getContactForScreen(selected) && (
                         <p className="meta-info">
                           <strong>Contato:</strong> {getContactForScreen(selected).name} — {getContactForScreen(selected).phone}
+                        </p>
+                      )}
+                      {selected.operatingHoursStart && (
+                        <p className="meta-info">
+                          <FiClock size={14} /> <strong>Horário:</strong> {selected.operatingHoursStart} às {selected.operatingHoursEnd}
+                          {selected.operatingDays && selected.operatingDays !== 'all' && ` (${selected.operatingDays === 'mon-fri' ? 'Seg-Sex' : selected.operatingDays === 'mon-sat' ? 'Seg-Sáb' : selected.operatingDays === 'tue-sun' ? 'Ter-Dom' : selected.operatingDays === 'tue-sat' ? 'Ter-Sáb' : selected.operatingDays === 'mon-sun-except-wed' ? 'Exceto Quarta' : selected.operatingDays})`}
+                          {selected.outsideOperatingHours && <span className="badge-outside-hours">Fora do horário</span>}
+                        </p>
+                      )}
+                      {(selected.flowPeople || selected.flowVehicles) && (
+                        <p className="meta-info">
+                          <strong>Fluxo mensal:</strong>{' '}
+                          {selected.flowPeople ? `${selected.flowPeople.toLocaleString('pt-BR')} pessoas` : ''}
+                          {selected.flowPeople && selected.flowVehicles ? ' / ' : ''}
+                          {selected.flowVehicles ? `${selected.flowVehicles.toLocaleString('pt-BR')} veículos` : ''}
                         </p>
                       )}
                       <p className="meta-info"><FiClock size={14} /> Criado: {new Date(selected.createdAt).toLocaleDateString('pt-BR')}</p>

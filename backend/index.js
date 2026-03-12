@@ -314,7 +314,14 @@ app.get('/screens', authenticateToken, async (req, res) => {
       include: [{ model: Note, as: 'Notes' }],
       order: [['id', 'ASC']]
     });
-    res.json(screens);
+    // Add computed outsideOperatingHours flag
+    const result = screens.map(s => {
+      const json = s.toJSON();
+      json.outsideOperatingHours = !isWithinOperatingHours(s);
+      json.totalFlow = (s.flowPeople || 0) + (s.flowVehicles || 0);
+      return json;
+    });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -356,6 +363,44 @@ function cleanMonitorName(name, location) {
 function isStaticMedia(screen) {
   const name = ((screen.name || '') + ' ' + (screen.location || '')).toUpperCase();
   return name.includes('FRONTLIGHT') || name.includes('BACKLIGHT');
+}
+
+// Check if current time is within the screen's operating hours
+function isWithinOperatingHours(screen) {
+  if (!screen.operatingHoursStart || !screen.operatingHoursEnd) return true; // no hours set = always operating
+  
+  // Use Brasília timezone (UTC-3)
+  const now = new Date();
+  const brTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const currentHour = brTime.getHours();
+  const currentMinute = brTime.getMinutes();
+  const currentTime = currentHour * 60 + currentMinute;
+  
+  const [startH, startM] = screen.operatingHoursStart.split(':').map(Number);
+  const [endH, endM] = screen.operatingHoursEnd.split(':').map(Number);
+  const startTime = startH * 60 + (startM || 0);
+  const endTime = endH * 60 + (endM || 0);
+  
+  // Check day of week
+  if (screen.operatingDays && screen.operatingDays !== 'all') {
+    const dayIndex = brTime.getDay(); // 0=Sun, 1=Mon, ...
+    const dayMap = { 'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6 };
+    const days = screen.operatingDays;
+    let isOperatingDay = true;
+    
+    if (days === 'mon-fri') isOperatingDay = dayIndex >= 1 && dayIndex <= 5;
+    else if (days === 'mon-sat') isOperatingDay = dayIndex >= 1 && dayIndex <= 6;
+    else if (days === 'tue-sun') isOperatingDay = dayIndex !== 1; // not Monday
+    else if (days === 'tue-sat') isOperatingDay = dayIndex >= 2 && dayIndex <= 6;
+    else if (days === 'mon-sun-except-wed') isOperatingDay = dayIndex !== 3;
+    
+    if (!isOperatingDay) return false;
+  }
+  
+  // 24h operation
+  if (startTime === 0 && endTime >= 23 * 60 + 59) return true;
+  
+  return currentTime >= startTime && currentTime <= endTime;
 }
 
 async function applyScreenStatus(screen, nextStatus, options = {}) {
@@ -1147,8 +1192,10 @@ async function generateAutomatedAlerts() {
     for (const screen of screens) {
       if (screen.status === 'static' || screen.status === 'not_installed') continue;
 
-      // Alert: offline for more than 4 hours
+      // Alert: offline for more than 4 hours — but only if within operating hours
       if (screen.status === 'offline' && screen.lastHeartbeat) {
+        // Skip offline alert if outside operating hours (wifi is off, expected)
+        if (!isWithinOperatingHours(screen)) continue;
         const offlineMs = now - new Date(screen.lastHeartbeat);
         const offlineHours = offlineMs / (1000 * 60 * 60);
         if (offlineHours >= 4) {

@@ -1078,6 +1078,19 @@
   color: var(--text);
 }
 
+.badge-outside-hours {
+  display: inline-block;
+  background: #f59e0b;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .btn-status-toggle {
   padding: 8px 16px;
   border-radius: var(--radius-sm);

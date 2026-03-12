@@ -84,6 +84,31 @@ const Screen = sequelize.define('Screen', {
     allowNull: true,
     comment: 'Screen orientation (horizontal/vertical)'
   },
+  operatingHoursStart: {
+    type: DataTypes.STRING(5),
+    allowNull: true,
+    comment: 'Opening time HH:MM (e.g. 06:00)'
+  },
+  operatingHoursEnd: {
+    type: DataTypes.STRING(5),
+    allowNull: true,
+    comment: 'Closing time HH:MM (e.g. 22:00)'
+  },
+  operatingDays: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: 'Operating days: all, mon-fri, mon-sat, tue-sun, tue-sat, etc.'
+  },
+  flowPeople: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: 'Monthly people flow'
+  },
+  flowVehicles: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: 'Monthly vehicle flow'
+  },
   createdAt: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW
