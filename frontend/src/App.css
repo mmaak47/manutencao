@@ -3402,8 +3402,40 @@
 .register-container { max-width: 520px; }
 .register-box { max-height: 90vh; overflow-y: auto; }
 .register-form { display: flex; flex-direction: column; gap: 14px; }
+.register-form .form-group { margin-bottom: 2px; }
+.register-form label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.register-form input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: 'Montserrat', sans-serif;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+  background: #FFFFFF;
+  color: var(--text);
+  box-sizing: border-box;
+}
+.register-form input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+.register-form input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(233,93,52,0.08);
+}
 .register-row { display: flex; gap: 12px; }
 .register-row .form-group { flex: 1; }
+.register-form .login-button { margin-top: 6px; }
 .register-footer {
   text-align: center;
   padding-top: 12px;
@@ -3422,7 +3454,13 @@
   font-family: 'Montserrat', sans-serif;
 }
 .link-btn:hover { color: var(--accent-hover); }
-.field-error { font-size: 11px; color: var(--danger); margin-top: 3px; }
+.field-error {
+  display: block;
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 5px;
+  font-weight: 600;
+}
 
 /* Password strength */
 .password-strength { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -3436,22 +3474,28 @@
 .strength-item.fail { background: #f8f9fa; color: #adb5bd; }
 
 /* Photo section */
-.photo-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.photo-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
 .photo-tab {
   flex: 1;
-  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 12px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
   background: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all .15s;
+  font-family: 'Montserrat', sans-serif;
 }
 .photo-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(233,93,52,.06); }
+.photo-tab:hover { border-color: var(--accent); background: rgba(233,93,52,.03); }
 .photo-upload-btn {
   display: inline-block;
-  padding: 9px 16px;
+  padding: 12px 16px;
   background: #f8f9fa;
   border: 1.5px dashed var(--border);
   border-radius: var(--radius-sm);
@@ -3462,9 +3506,20 @@
   text-align: center;
   width: 100%;
   box-sizing: border-box;
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 500;
 }
 .photo-upload-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(233,93,52,.04); }
-.camera-preview { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.camera-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: #fbfbfc;
+}
 .camera-video {
   width: 100%;
   max-height: 220px;
@@ -3498,6 +3553,17 @@
   font-size: 12px;
   cursor: pointer;
   font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .register-row {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .register-box {
+    max-height: none;
+  }
 }
 
 /* Register success */
