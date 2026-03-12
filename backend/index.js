@@ -1492,7 +1492,19 @@ app.post('/tickets', authenticateToken, async (req, res) => {
     // Send notification on ticket create
     const nConfig = await NotificationConfig.findOne();
     if (nConfig && nConfig.notifyOnTicketCreate && nConfig.whatsappEnabled) {
-      const msg = `\ud83c\udfa9 *NOVO TICKET #${ticket.id}*\n${title}\nCategoria: ${category || 'geral'}\nPrioridade: ${priority || 'media'}${assignedTo ? '\nAtribu\u00eddo: ' + assignedTo : ''}`;
+      const catMap = { general: 'Geral', hardware: 'Hardware', software: 'Software', network: 'Rede', power: 'Energia', display: 'Display', other: 'Outro' };
+      const prioMap = { low: '🟢 Baixa', medium: '🟡 Média', high: '🟠 Alta', critical: '🔴 Crítica' };
+      const cat = catMap[category] || category || 'Geral';
+      const prio = prioMap[priority] || priority || '🟡 Média';
+      let msg = `🎫 *NOVO TICKET #${ticket.id}*\n\n📋 *${title}*`;
+      if (description) msg += `\n${description}`;
+      msg += `\n\n📁 Categoria: ${cat}\n⚡ Prioridade: ${prio}`;
+      if (assignedTo) msg += `\n👤 Atribuído: ${assignedTo}`;
+      if (screenId) {
+        const scr = await Screen.findByPk(screenId);
+        if (scr) msg += `\n🖥️ Tela: ${scr.name}`;
+      }
+      msg += `\n🕐 ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
       sendNotification(msg);
     }
     res.status(201).json(ticket);
