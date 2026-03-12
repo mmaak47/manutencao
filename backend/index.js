@@ -1342,7 +1342,15 @@ async function generateAutomatedAlerts() {
             // Send notification
             const config = await NotificationConfig.findOne();
             if (config && config.notifyOnOffline4h) {
-              sendNotification(`⚠️ *ALERTA* — ${screen.name} offline há ${Math.floor(offlineHours)}h\nLocal: ${screen.location || 'N/A'}\nDesde: ${new Date(screen.lastHeartbeat).toLocaleString('pt-BR')}`);
+              const prioMap = { critical: '🔴 Crítica', high: '🟠 Alta', medium: '🟡 Média', low: '🟢 Baixa' };
+              const prio = prioMap[screen.priority] || '';
+              const addr = screen.address || screen.location || '';
+              let msg = `⚠️ *ALERTA — OFFLINE*\n\n💺 *${screen.name}*\nOffline há ${Math.floor(offlineHours)} horas`;
+              if (addr) msg += `\n📍 ${addr}`;
+              msg += `\n🕒 Última conexão: ${new Date(screen.lastHeartbeat).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
+              if (prio) msg += `\n${prio}`;
+              if (offlineHours >= 24) msg += `\n\n‼️ *Atenção: mais de 24h offline*`;
+              sendNotification(msg);
             }
           }
         }
@@ -1390,7 +1398,11 @@ async function generateAutomatedAlerts() {
           });
           const config = await NotificationConfig.findOne();
           if (config && config.notifyOnOscillation) {
-            sendNotification(`🔄 *OSCILAÇÃO* — ${screen.name}\n${recentEvents.length} mudanças de status nas últimas 6h\nLocal: ${screen.location || 'N/A'}\nVerificar conexão/energia.`);
+            const addr = screen.address || screen.location || '';
+            let msg = `🔄 *OSCILAÇÃO DETECTADA*\n\n💺 *${screen.name}*\n${recentEvents.length} mudanças de status nas últimas 6h`;
+            if (addr) msg += `\n📍 ${addr}`;
+            msg += `\n\n⚡ Possíveis causas: queda de energia, rede instável ou player reiniciando.`;
+            sendNotification(msg);
           }
         }
       }
@@ -1595,7 +1607,13 @@ app.post('/schedules', authenticateToken, async (req, res) => {
     // Send notification to technician
     const nConfig = await NotificationConfig.findOne();
     if (nConfig && nConfig.notifyOnScheduleCreate && nConfig.whatsappEnabled) {
-      const msg = `\ud83d\udcc5 *NOVO AGENDAMENTO*\n${title}\nData: ${new Date(scheduledDate + 'T12:00:00').toLocaleDateString('pt-BR')}${scheduledTime ? ' \u00e0s ' + scheduledTime : ''}${assignedTo ? '\nRespons\u00e1vel: ' + assignedTo : ''}${location ? '\nLocal: ' + location : ''}`;
+      let msg = `📅 *NOVO AGENDAMENTO*\n\n📝 *${title}*`;
+      if (description) msg += `\n${description}`;
+      msg += `\n\n📆 Data: ${new Date(scheduledDate + 'T12:00:00').toLocaleDateString('pt-BR')}`;
+      if (scheduledTime) msg += ` às ${scheduledTime}`;
+      if (assignedTo) msg += `\n👤 Responsável: ${assignedTo}`;
+      if (location) msg += `\n📍 Local: ${location}`;
+      if (city) msg += ` — ${city}`;
       sendNotification(msg);
     }
     res.status(201).json(schedule);
