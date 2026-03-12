@@ -1514,7 +1514,11 @@ app.post('/tickets', authenticateToken, async (req, res) => {
       if (assignedTo) msg += `\n👤 Atribuído: ${assignedTo}`;
       if (screenId) {
         const scr = await Screen.findByPk(screenId);
-        if (scr) msg += `\n🖥️ Tela: ${scr.name}`;
+        if (scr) {
+          msg += `\n🖥️ Tela: ${scr.name}`;
+          const addr = scr.address || scr.location;
+          if (addr) msg += `\n📍 ${addr}`;
+        }
       }
       msg += `\n🕐 ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
       sendNotification(msg);
@@ -1612,7 +1616,14 @@ app.post('/schedules', authenticateToken, async (req, res) => {
       msg += `\n\n📆 Data: ${new Date(scheduledDate + 'T12:00:00').toLocaleDateString('pt-BR')}`;
       if (scheduledTime) msg += ` às ${scheduledTime}`;
       if (assignedTo) msg += `\n👤 Responsável: ${assignedTo}`;
-      if (location) msg += `\n📍 Local: ${location}`;
+      if (location) msg += `\n📍 ${location}`;
+      else if (screenId) {
+        const scr = await Screen.findByPk(screenId);
+        if (scr) {
+          const addr = scr.address || scr.location;
+          if (addr) msg += `\n📍 ${addr}`;
+        }
+      }
       if (city) msg += ` — ${city}`;
       sendNotification(msg);
     }
