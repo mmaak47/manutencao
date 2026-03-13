@@ -79,7 +79,12 @@
 }
 
 .login-logo {
+  display: inline-block;
   height: 44px;
+  padding: 8px 14px;
+  background: #111827;
+  border-radius: 10px;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.28);
   margin-bottom: 20px;
 }
 
