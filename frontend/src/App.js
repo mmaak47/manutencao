@@ -161,6 +161,8 @@ function App() {
   const [regRejectModal, setRegRejectModal] = useState(null);
   const [regRejectReason, setRegRejectReason] = useState('');
   const [regStatusFilter, setRegStatusFilter] = useState('pending');
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
 
   // Origin system edit: fetch form data for a monitor
   const openOriginEdit = async (screen) => {
@@ -400,6 +402,7 @@ function App() {
     if (activePage === 'inventory') { fetchParts(); }
     if (activePage === 'analytics-pro') { fetchPatterns(); fetchTicketStats(); fetchLoopAudits(); }
     if (activePage === 'notifications') { fetchNotifConfig(); }
+    if (activePage === 'approvals') { fetchPendingRegistrations(regStatusFilter); fetchAdminUsers(); fetchUsers(); }
   }, [activePage, authToken, calendarMonth, calendarYear]);
 
   useEffect(() => {
@@ -935,7 +938,34 @@ function App() {
       const res = await axios.post(`${API_BASE}/admin/registrations/${id}/approve`, {}, authConfig);
       showAlert(`✅ Técnico aprovado! Login criado: ${res.data.username}`, 'success');
       fetchPendingRegistrations(regStatusFilter);
+      fetchUsers();
+      fetchAdminUsers();
     } catch (err) { showAlert(err.response?.data?.error || 'Erro ao aprovar.', 'error'); }
+  };
+
+  const fetchAdminUsers = async () => {
+    if (!authToken || currentUser?.role !== 'admin') return;
+    setAdminUsersLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/admin/users`, authConfig);
+      setAdminUsers(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error('Error fetching admin users:', err);
+      setAdminUsers([]);
+    } finally {
+      setAdminUsersLoading(false);
+    }
+  };
+
+  const updateAdminUser = async (userId, updates) => {
+    try {
+      const res = await axios.patch(`${API_BASE}/admin/users/${userId}`, updates, authConfig);
+      setAdminUsers((prev) => prev.map((user) => (user.id === userId ? { ...user, ...res.data } : user)));
+      fetchUsers(); // refresh assignment dropdown users
+      showAlert('Usuário atualizado com sucesso.', 'success');
+    } catch (err) {
+      showAlert(err.response?.data?.error || 'Erro ao atualizar usuário.', 'error');
+    }
   };
 
   const rejectRegistration = async (id, reason) => {
@@ -4266,6 +4296,79 @@ function App() {
             ))}
           </div>
         )}
+
+        <div style={{ marginTop: 20, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>Usuários do Sistema</h3>
+              <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 13 }}>Controle papéis e usuários ativos para atribuição em tickets/agendamentos.</p>
+            </div>
+            <button className="btn-secondary" onClick={fetchAdminUsers}>
+              <FiRefreshCw size={14} /> Atualizar Usuários
+            </button>
+          </div>
+
+          {adminUsersLoading ? (
+            <div className="loading-state">Carregando usuários...</div>
+          ) : adminUsers.length === 0 ? (
+            <div className="empty-state" style={{ padding: 12 }}>Nenhum usuário encontrado.</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>
+                    <th style={{ padding: '8px 6px' }}>Usuário</th>
+                    <th style={{ padding: '8px 6px' }}>Papel</th>
+                    <th style={{ padding: '8px 6px' }}>Status</th>
+                    <th style={{ padding: '8px 6px' }}>Criado em</th>
+                    <th style={{ padding: '8px 6px' }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminUsers.map((user) => (
+                    <tr key={user.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '8px 6px' }}>
+                        <strong>{user.username}</strong>
+                        {currentUser?.id === user.id ? <span style={{ marginLeft: 8, fontSize: 11, color: '#64748b' }}>(você)</span> : null}
+                      </td>
+                      <td style={{ padding: '8px 6px' }}>
+                        <select value={user.role} onChange={(e) => updateAdminUser(user.id, { role: e.target.value })}>
+                          <option value="user">Técnico</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </td>
+                      <td style={{ padding: '8px 6px' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          fontSize: 12,
+                          background: user.active ? '#ecfdf3' : '#fef2f2',
+                          color: user.active ? '#166534' : '#991b1b'
+                        }}>
+                          {user.active ? 'Ativo' : 'Inativo'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '8px 6px', fontSize: 12, color: '#64748b' }}>
+                        {user.createdAt ? new Date(user.createdAt).toLocaleString('pt-BR') : '-'}
+                      </td>
+                      <td style={{ padding: '8px 6px' }}>
+                        <button
+                          className="btn-secondary"
+                          onClick={() => updateAdminUser(user.id, { active: !user.active })}
+                          disabled={currentUser?.id === user.id && user.active}
+                          title={currentUser?.id === user.id && user.active ? 'Você não pode desativar seu próprio usuário' : ''}
+                        >
+                          {user.active ? 'Desativar' : 'Ativar'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         {/* Reject reason modal */}
         {regRejectModal && (

@@ -76,6 +76,7 @@ function validatePasswordStrength(password) {
 // Initialize database
 sequelize.sync().then(async () => {
   await ensureScreenColumns();
+  await ensureUserColumns();
   console.log('Database synced');
   bootstrapAdmin();
 
@@ -164,6 +165,23 @@ async function ensureScreenColumns() {
     }
   } catch (err) {
     console.error('Failed to ensure screens columns:', err.message);
+  }
+}
+
+async function ensureUserColumns() {
+  try {
+    const queryInterface = sequelize.getQueryInterface();
+    const tableDefinition = await queryInterface.describeTable('users');
+
+    if (!tableDefinition.active) {
+      await queryInterface.addColumn('users', 'active', {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true
+      });
+    }
+  } catch (err) {
+    console.error('Failed to ensure users columns:', err.message);
   }
 }
 
@@ -430,7 +448,7 @@ app.post('/admin/registrations/:id/approve', authenticateToken, requireAdmin, as
     let counter = 1;
     while (await User.findOne({ where: { username } })) { username = baseUsername + counter++; }
 
-    const newUser = await User.create({ username, passwordHash: reg.passwordHash, role: 'user' });
+    const newUser = await User.create({ username, passwordHash: reg.passwordHash, role: 'user', active: true });
     await reg.update({ status: 'approved', reviewedBy: req.user.username, reviewedAt: new Date() });
     await logAudit(req, 'approve', 'tech_registration', reg.id, { username, name: `${reg.firstName} ${reg.lastName}` });
     res.json({ success: true, username, userId: newUser.id });
@@ -2075,9 +2093,80 @@ app.get('/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
 // ===== USERS LIST (for assignment dropdowns) =====
 app.get('/users', authenticateToken, async (req, res) => {
   try {
-    const users = await User.findAll({ attributes: ['id', 'username', 'role'] });
+    const users = await User.findAll({
+      where: { active: true },
+      attributes: ['id', 'username', 'role', 'active'],
+      order: [['username', 'ASC']]
+    });
     res.json(users);
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== ADMIN USERS MANAGEMENT =====
+app.get('/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const users = await User.findAll({
+      attributes: ['id', 'username', 'role', 'active', 'createdAt', 'updatedAt'],
+      order: [['createdAt', 'ASC']]
+    });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/admin/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(userId)) return res.status(400).json({ error: 'ID inválido' });
+
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    const updates = {};
+    if (Object.prototype.hasOwnProperty.call(req.body, 'role')) {
+      updates.role = req.body.role === 'admin' ? 'admin' : 'user';
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'active')) {
+      updates.active = Boolean(req.body.active);
+    }
+
+    // Prevent locking out the current admin account.
+    if (user.id === req.user.id) {
+      if (updates.active === false) {
+        return res.status(400).json({ error: 'Você não pode desativar o seu próprio usuário.' });
+      }
+      if (updates.role === 'user') {
+        return res.status(400).json({ error: 'Você não pode remover seu próprio papel de admin.' });
+      }
+    }
+
+    // Prevent removing the last active admin.
+    const nextRole = updates.role || user.role;
+    const nextActive = Object.prototype.hasOwnProperty.call(updates, 'active') ? updates.active : user.active;
+    const isLosingAdmin = user.role === 'admin' && nextRole !== 'admin';
+    const isDeactivatingAdmin = user.role === 'admin' && nextActive === false;
+    if (isLosingAdmin || isDeactivatingAdmin) {
+      const activeAdmins = await User.count({ where: { role: 'admin', active: true } });
+      if (activeAdmins <= 1) {
+        return res.status(400).json({ error: 'É necessário manter ao menos um admin ativo.' });
+      }
+    }
+
+    await user.update(updates);
+    await logAudit(req, 'update', 'user', user.id, updates);
+
+    res.json({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      active: user.active,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ===== AUTO-DIAGNOSIS: Try remote reboot on offline screen =====
