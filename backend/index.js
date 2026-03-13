@@ -45,6 +45,7 @@ const DEFAULT_TECHNICIAN_HOURLY_RATE = Number(process.env.DEFAULT_TECHNICIAN_HOU
 const SLA_AUTOMATION_INTERVAL_MS = 15 * 60 * 1000;
 const PREVENTIVE_LOOKBACK_DAYS = 45;
 const PREVENTIVE_TELEMETRY_LOOKBACK_HOURS = 72;
+const MAX_PREVENTIVE_PER_DAY = Number(process.env.MAX_PREVENTIVE_PER_DAY || 2);
 
 function calculateTicketCost(ticket) {
   const timeSpentMinutes = Number(ticket?.timeSpentMinutes) || 0;
@@ -439,7 +440,18 @@ async function processPreventiveSchedules() {
   const telemetrySince = new Date(Date.now() - PREVENTIVE_TELEMETRY_LOOKBACK_HOURS * 60 * 60 * 1000);
   const screens = await Screen.findAll({ where: { status: { [Op.notIn]: ['static', 'not_installed'] } } });
 
+  // Collect all screens that need a preventive visit (skip those already scheduled)
+  const candidates = [];
   for (const screen of screens) {
+    const existingSchedule = await Schedule.findOne({
+      where: {
+        screenId: screen.id,
+        status: { [Op.in]: ['scheduled', 'in_progress'] },
+        title: { [Op.like]: 'Preventiva automática%' }
+      }
+    });
+    if (existingSchedule) continue;
+
     const recentTickets = await Ticket.findAll({
       where: { screenId: screen.id, createdAt: { [Op.gte]: ticketSince } },
       order: [['createdAt', 'DESC']]
@@ -465,29 +477,35 @@ async function processPreventiveSchedules() {
       reasons.push(`recorrência na categoria ${recurringCategory[0]}`);
     }
 
-    if (snapshots.some((snapshot) => Number(snapshot.cpuTemp) >= 80)) {
-      reasons.push('temperatura crítica de player');
-    }
-    if (snapshots.some((snapshot) => Number(snapshot.diskPct) >= 85)) {
-      reasons.push('disco em nível crítico');
-    }
-    if (snapshots.some((snapshot) => Number(snapshot.cpuUsage) >= 90)) {
-      reasons.push('CPU sustentada em nível crítico');
-    }
+    const isCritical = snapshots.some((s) => Number(s.cpuTemp) >= 80 || Number(s.diskPct) >= 85 || Number(s.cpuUsage) >= 90);
+    if (snapshots.some((s) => Number(s.cpuTemp) >= 80)) reasons.push('temperatura crítica de player');
+    if (snapshots.some((s) => Number(s.diskPct) >= 85)) reasons.push('disco em nível crítico');
+    if (snapshots.some((s) => Number(s.cpuUsage) >= 90)) reasons.push('CPU sustentada em nível crítico');
 
     if (!reasons.length) continue;
 
-    const existingSchedule = await Schedule.findOne({
-      where: {
-        screenId: screen.id,
-        status: { [Op.in]: ['scheduled', 'in_progress'] },
-        title: { [Op.like]: 'Preventiva automática%' }
-      }
-    });
-    if (existingSchedule) continue;
+    candidates.push({ screen, reasons, isCritical });
+  }
 
-    const scheduledDate = normalizeScheduleDate(new Date(Date.now() + (reasons.some((reason) => reason.includes('crítica')) ? 24 : 72) * 60 * 60 * 1000));
+  if (!candidates.length) return;
+
+  // Sort: critical screens first, then by number of reasons descending
+  candidates.sort((a, b) => {
+    if (a.isCritical !== b.isCritical) return a.isCritical ? -1 : 1;
+    return b.reasons.length - a.reasons.length;
+  });
+
+  // Spread across days: MAX_PREVENTIVE_PER_DAY visits per day starting from baseOffsetDays
+  // Critical triggers start next day (baseOffsetDays=1), others start in 3 days
+  const hasCritical = candidates.some((c) => c.isCritical);
+  const baseOffsetDays = hasCritical ? 1 : 3;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const { screen, reasons } = candidates[i];
+    const dayOffset = baseOffsetDays + Math.floor(i / MAX_PREVENTIVE_PER_DAY);
+    const scheduledDate = normalizeScheduleDate(new Date(Date.now() + dayOffset * 24 * 60 * 60 * 1000));
     const description = `Gerado automaticamente pelo sistema com base em padrão operacional: ${reasons.join(', ')}.`;
+
     const schedule = await Schedule.create({
       screenId: screen.id,
       title: `Preventiva automática - ${screen.name}`,
