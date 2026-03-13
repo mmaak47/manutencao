@@ -85,6 +85,18 @@ function sanitizeUsernameCandidate(value) {
   return (value || '').toLowerCase().replace(/[^a-z0-9._-]/g, '');
 }
 
+async function generateUniqueEmailFromBase(baseName, domain = 'intermidia.local') {
+  const base = sanitizeUsernameCandidate(baseName) || 'user';
+  let candidate = `${base}@${domain}`;
+  let counter = 1;
+
+  while (await User.findOne({ where: { email: candidate } })) {
+    candidate = `${base}${counter++}@${domain}`;
+  }
+
+  return candidate;
+}
+
 async function generateUniqueUsername(email, fallback = 'user') {
   let base = sanitizeUsernameCandidate((email || '').split('@')[0]);
   if (!base) {
@@ -234,8 +246,12 @@ async function ensureUserColumns() {
         const taken = await User.findOne({ where: { email: candidate } });
         if (!taken || taken.id === user.id) {
           await user.update({ email: candidate });
+          continue;
         }
       }
+
+      const fallbackEmail = await generateUniqueEmailFromBase(user.username || user.role || 'user');
+      await user.update({ email: fallbackEmail });
     }
   } catch (err) {
     console.error('Failed to ensure users columns:', err.message);
