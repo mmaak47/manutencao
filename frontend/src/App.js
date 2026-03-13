@@ -2210,6 +2210,8 @@ function App() {
       group.monitorNames.push(row.screenName || `Monitor ${row.originId}`);
       group.availableSlots10 = Math.max(group.availableSlots10 || 0, row.availableSlots10 || 0);
       group.availableSlots15 = Math.max(group.availableSlots15 || 0, row.availableSlots15 || 0);
+      group.estimatedUsedSlots10 = Math.max(group.estimatedUsedSlots10 || 0, row.estimatedUsedSlots10 || 0);
+      group.estimatedUsedSlots15 = Math.max(group.estimatedUsedSlots15 || 0, row.estimatedUsedSlots15 || 0);
       group.remainingSeconds = Math.max(group.remainingSeconds || 0, row.remainingSeconds || 0);
     });
 
@@ -3889,6 +3891,8 @@ function App() {
               <div className="an-card"><div className="an-val">{loopAuditData.summary?.total || 0}</div><div className="an-label">Monitores Auditados</div></div>
               <div className="an-card" style={{ borderLeft: '3px solid #ef4444' }}><div className="an-val">{loopAuditData.summary?.critical || 0}</div><div className="an-label">Críticos ({'>='} {Math.round((loopAuditData.targetSeconds || 180) / 60)}min)</div></div>
               <div className="an-card" style={{ borderLeft: '3px solid #f59e0b' }}><div className="an-val">{loopAuditData.summary?.high || 0}</div><div className="an-label">Alto Risco</div></div>
+              <div className="an-card"><div className="an-val">{loopAuditData.summary?.totalOccupied10 || 0}</div><div className="an-label">Cotas 10s Contratadas</div></div>
+              <div className="an-card"><div className="an-val">{loopAuditData.summary?.totalOccupied15 || 0}</div><div className="an-label">Cotas 15s Contratadas</div></div>
               <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable10 || 0}</div><div className="an-label">Cotas 10s Disponíveis</div></div>
               <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable15 || 0}</div><div className="an-label">Cotas 15s Disponíveis</div></div>
             </div>
@@ -3927,6 +3931,8 @@ function App() {
                       <th>Loop Atual</th>
                       <th>Tempo Livre</th>
                       <th>Risco</th>
+                      <th>Cotas Contratadas 10s</th>
+                      <th>Cotas Contratadas 15s</th>
                       <th>Cotas 10s</th>
                       <th>Cotas 15s</th>
                     </tr>
@@ -3938,7 +3944,7 @@ function App() {
                       if (row.isCityHeader) {
                         return (
                           <tr key={row.key}>
-                            <td colSpan={7} style={{ fontWeight: 700, background: '#f8fafc' }}>
+                            <td colSpan={9} style={{ fontWeight: 700, background: '#f8fafc' }}>
                               Cidade: {row.city}
                             </td>
                           </tr>
@@ -3968,6 +3974,8 @@ function App() {
                               {row.riskLevel || 'unknown'}
                             </span>
                           </td>
+                          <td>{row.estimatedUsedSlots10 ?? 0}</td>
+                          <td>{row.estimatedUsedSlots15 ?? 0}</td>
                           <td>{row.availableSlots10 ?? 0}</td>
                           <td>{row.availableSlots15 ?? 0}</td>
                         </tr>
@@ -4157,7 +4165,6 @@ function App() {
             <h3><FiDollarSign size={18} /> Contratos a Vencer</h3>
             <p>
               Acompanhamento comercial com aviso automático em 15 e 5 dias.
-              Cotas ocupadas no ciclo atual: <strong>{contracts[0]?.occupiedSlotsCurrentCycle || 0}/{contracts[0]?.totalCycleSlots || 3}</strong>
             </p>
           </div>
           <div className="contracts-actions">
@@ -4208,7 +4215,6 @@ function App() {
                       <th>Valor</th>
                       <th>Vendedor</th>
                       <th>Dias</th>
-                      <th>Cotas Ocupadas</th>
                       <th>Comercial</th>
                       <th>Notificado</th>
                       <th>Ações</th>
@@ -4235,11 +4241,6 @@ function App() {
                           <td>
                             <span className="contract-days" style={{color: urgency.color, fontWeight: 700}}>
                               {c.daysRemaining} dias
-                            </span>
-                          </td>
-                          <td>
-                            <span className="contract-slots" title="Cotas ocupadas no ciclo atual">
-                              {c.occupiedSlotsCurrentCycle || 0}/{c.totalCycleSlots || 3}
                             </span>
                           </td>
                           <td>
