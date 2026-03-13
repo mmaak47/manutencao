@@ -12,6 +12,9 @@ const REPORT_STORAGE_KEY = 'maintenance_report_rows_v1';
 const EMPTY_TICKET_FORM = { title: '', description: '', category: 'general', priority: 'medium', screenId: '', assignedTo: '', timeSpentMinutes: '', actualCost: '' };
 const EMPTY_SCHEDULE_FORM = { title: '', description: '', scheduledDate: '', scheduledTime: '', assignedTo: '', screenId: '', location: '', color: '#E95D34' };
 
+const normalizeRole = (role) => String(role || '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+const normalizeUserPayload = (user) => user ? ({ ...user, role: normalizeRole(user.role) }) : null;
+
 function App() {
   const [screens, setScreens] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -45,7 +48,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const raw = localStorage.getItem('authUser');
-      return raw ? JSON.parse(raw) : null;
+      return raw ? normalizeUserPayload(JSON.parse(raw)) : null;
     } catch (err) {
       return null;
     }
@@ -844,8 +847,9 @@ function App() {
   const fetchCurrentUser = async () => {
     try {
       const res = await axios.get(`${API_BASE}/auth/me`, authConfig);
-      setCurrentUser(res.data);
-      localStorage.setItem('authUser', JSON.stringify(res.data));
+      const userPayload = normalizeUserPayload(res.data);
+      setCurrentUser(userPayload);
+      localStorage.setItem('authUser', JSON.stringify(userPayload));
     } catch (err) {
       handleLogout();
     }
@@ -1032,10 +1036,11 @@ function App() {
         email: loginEmail,
         password: loginPassword
       });
+      const userPayload = normalizeUserPayload(res.data.user);
       setAuthToken(res.data.token);
-      setCurrentUser(res.data.user);
+      setCurrentUser(userPayload);
       localStorage.setItem('authToken', res.data.token);
-      localStorage.setItem('authUser', JSON.stringify(res.data.user));
+      localStorage.setItem('authUser', JSON.stringify(userPayload));
       setLoginPassword('');
     } catch (err) {
       const message = err.response?.data?.error || 'Falha no login';

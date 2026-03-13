@@ -49,6 +49,10 @@ const MAX_PREVENTIVE_PER_DAY = Number(process.env.MAX_PREVENTIVE_PER_DAY || 2);
 const CONTRACT_NOTIFY_THRESHOLDS_DAYS = [15, 5];
 const CONTRACT_TOTAL_CYCLE_SLOTS = Number(process.env.CONTRACT_TOTAL_CYCLE_SLOTS || 3);
 
+function normalizeUserRole(role) {
+  return String(role || '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+}
+
 function calculateTicketCost(ticket) {
   const timeSpentMinutes = Number(ticket?.timeSpentMinutes) || 0;
   const laborCost = Number(((timeSpentMinutes / 60) * DEFAULT_TECHNICIAN_HOURLY_RATE).toFixed(2));
@@ -304,6 +308,15 @@ async function ensureUserColumns() {
 
       const fallbackEmail = await generateUniqueEmailFromBase(user.username || user.role || 'user');
       await user.update({ email: fallbackEmail });
+    }
+
+    // Normalize legacy role values (e.g. ADMIN/Admin) to prevent access issues.
+    const allUsers = await User.findAll();
+    for (const user of allUsers) {
+      const normalizedRole = normalizeUserRole(user.role);
+      if (user.role !== normalizedRole) {
+        await user.update({ role: normalizedRole });
+      }
     }
   } catch (err) {
     console.error('Failed to ensure users columns:', err.message);
@@ -609,7 +622,7 @@ async function bootstrapAdmin() {
 
 function createToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, email: user.email, role: user.role },
+    { id: user.id, username: user.username, email: user.email, role: normalizeUserRole(user.role) },
     JWT_SECRET,
     { expiresIn: '12h' }
   );
@@ -651,7 +664,7 @@ app.post('/auth/login', async (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
-        role: user.role
+        role: normalizeUserRole(user.role)
       }
     });
   } catch (err) {
@@ -669,7 +682,12 @@ app.get('/auth/me', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json(user);
+    res.json({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: normalizeUserRole(user.role)
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -688,7 +706,7 @@ app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => 
       return res.status(400).json({ error: 'E-mail inválido' });
     }
 
-    const normalizedRole = role === 'admin' ? 'admin' : 'user';
+    const normalizedRole = normalizeUserRole(role);
     const existingEmail = await User.findOne({ where: { email: normalizedEmail } });
     if (existingEmail) {
       return res.status(409).json({ error: 'E-mail já cadastrado' });
@@ -2599,7 +2617,7 @@ app.patch('/admin/users/:id', authenticateToken, requireAdmin, async (req, res) 
 
     const updates = {};
     if (Object.prototype.hasOwnProperty.call(req.body, 'role')) {
-      updates.role = req.body.role === 'admin' ? 'admin' : 'user';
+      updates.role = normalizeUserRole(req.body.role);
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'active')) {
       updates.active = Boolean(req.body.active);
@@ -2616,10 +2634,11 @@ app.patch('/admin/users/:id', authenticateToken, requireAdmin, async (req, res) 
     }
 
     // Prevent removing the last active admin.
-    const nextRole = updates.role || user.role;
+    const nextRole = normalizeUserRole(updates.role || user.role);
     const nextActive = Object.prototype.hasOwnProperty.call(updates, 'active') ? updates.active : user.active;
-    const isLosingAdmin = user.role === 'admin' && nextRole !== 'admin';
-    const isDeactivatingAdmin = user.role === 'admin' && nextActive === false;
+    const currentUserRole = normalizeUserRole(user.role);
+    const isLosingAdmin = currentUserRole === 'admin' && nextRole !== 'admin';
+    const isDeactivatingAdmin = currentUserRole === 'admin' && nextActive === false;
     if (isLosingAdmin || isDeactivatingAdmin) {
       const activeAdmins = await User.count({ where: { role: 'admin', active: true } });
       if (activeAdmins <= 1) {
@@ -2634,7 +2653,7 @@ app.patch('/admin/users/:id', authenticateToken, requireAdmin, async (req, res) 
       id: user.id,
       username: user.username,
       email: user.email,
-      role: user.role,
+      role: normalizeUserRole(user.role),
       active: user.active,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
