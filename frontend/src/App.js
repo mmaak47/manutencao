@@ -854,6 +854,19 @@ function App() {
       setCurrentUser(userPayload);
       setAuthToken('cookie-session');
     } catch (err) {
+      if (err.response?.status === 401) {
+        try {
+          await axios.post(`${API_BASE}/auth/refresh`, {}, authConfig);
+          const retryRes = await axios.get(`${API_BASE}/auth/me`, authConfig);
+          const userPayload = normalizeUserPayload(retryRes.data);
+          setCurrentUser(userPayload);
+          setAuthToken('cookie-session');
+          return;
+        } catch (refreshErr) {
+          // Fall through to local session cleanup.
+        }
+      }
+
       setAuthToken('');
       setCurrentUser(null);
     }
