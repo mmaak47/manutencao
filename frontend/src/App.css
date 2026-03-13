@@ -2861,6 +2861,31 @@
 .loop-risk-badge.low { background: #dcfce7; color: #166534; }
 .loop-risk-badge.unknown { background: #e2e8f0; color: #475569; }
 
+.modern-select {
+  min-width: 220px;
+  height: 36px;
+  padding: 0 36px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'Montserrat', sans-serif;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%), linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 14px, calc(100% - 12px) 14px;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.modern-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(233, 93, 52, 0.1);
+}
+
 /* Empty State */
 .empty-state {
   display: flex;
@@ -3482,6 +3507,12 @@
   .contracts-page,
   .reports-page,
   .analytics-pro-page { padding: 16px; }
+
+  .modern-select {
+    min-width: 180px;
+    width: 100%;
+    max-width: 260px;
+  }
 
   .contracts-table th,
   .contracts-table td,

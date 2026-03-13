@@ -3702,6 +3702,7 @@ app.get('/loops/summary', authenticateToken, async (req, res) => {
       low: all.filter((i) => i.riskLevel === 'low').length,
       unknown: all.filter((i) => i.riskLevel === 'unknown').length,
       avgLoopSeconds: all.length ? Math.round(all.reduce((acc, i) => acc + (i.loopSeconds || 0), 0) / all.length) : 0,
+      totalOccupied: all.reduce((acc, i) => acc + (i.estimatedUsedSlots10 || 0), 0),
       totalOccupied10: all.reduce((acc, i) => acc + (i.estimatedUsedSlots10 || 0), 0),
       totalOccupied15: all.reduce((acc, i) => acc + (i.estimatedUsedSlots15 || 0), 0),
       totalSellable10: all.reduce((acc, i) => acc + (i.availableSlots10 || 0), 0),

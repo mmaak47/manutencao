@@ -3891,15 +3891,14 @@ function App() {
               <div className="an-card"><div className="an-val">{loopAuditData.summary?.total || 0}</div><div className="an-label">Monitores Auditados</div></div>
               <div className="an-card" style={{ borderLeft: '3px solid #ef4444' }}><div className="an-val">{loopAuditData.summary?.critical || 0}</div><div className="an-label">Críticos ({'>='} {Math.round((loopAuditData.targetSeconds || 180) / 60)}min)</div></div>
               <div className="an-card" style={{ borderLeft: '3px solid #f59e0b' }}><div className="an-val">{loopAuditData.summary?.high || 0}</div><div className="an-label">Alto Risco</div></div>
-              <div className="an-card"><div className="an-val">{loopAuditData.summary?.totalOccupied10 || 0}</div><div className="an-label">Cotas 10s Contratadas</div></div>
-              <div className="an-card"><div className="an-val">{loopAuditData.summary?.totalOccupied15 || 0}</div><div className="an-label">Cotas 15s Contratadas</div></div>
+              <div className="an-card"><div className="an-val">{loopAuditData.summary?.totalOccupied || 0}</div><div className="an-label">Total de Cotas Ocupadas</div></div>
               <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable10 || 0}</div><div className="an-label">Cotas 10s Disponíveis</div></div>
               <div className="an-card success"><div className="an-val">{loopAuditData.summary?.totalSellable15 || 0}</div><div className="an-label">Cotas 15s Disponíveis</div></div>
             </div>
 
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', margin: '8px 0 12px' }}>
               <label style={{ fontSize: '12px', color: '#64748b' }}>Cidade</label>
-              <select value={loopCityFilter} onChange={(e) => setLoopCityFilter(e.target.value)} style={{ minWidth: '200px' }}>
+              <select className="modern-select" value={loopCityFilter} onChange={(e) => setLoopCityFilter(e.target.value)}>
                 <option value="all">Todas as cidades</option>
                 {loopCityOptions.map((city) => (
                   <option key={city} value={city}>{city}</option>
@@ -3907,7 +3906,7 @@ function App() {
               </select>
 
               <label style={{ fontSize: '12px', color: '#64748b' }}>Vendedor</label>
-              <select value={loopVendorFilter} onChange={(e) => setLoopVendorFilter(e.target.value)} style={{ minWidth: '220px' }}>
+              <select className="modern-select" value={loopVendorFilter} onChange={(e) => setLoopVendorFilter(e.target.value)}>
                 <option value="all">Todos os vendedores ativos</option>
                 {vendors.filter((v) => v.active !== false).map((vendor) => (
                   <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
@@ -3931,8 +3930,7 @@ function App() {
                       <th>Loop Atual</th>
                       <th>Tempo Livre</th>
                       <th>Risco</th>
-                      <th>Cotas Contratadas 10s</th>
-                      <th>Cotas Contratadas 15s</th>
+                      <th>Total Cotas Ocupadas</th>
                       <th>Cotas 10s</th>
                       <th>Cotas 15s</th>
                     </tr>
@@ -3944,7 +3942,7 @@ function App() {
                       if (row.isCityHeader) {
                         return (
                           <tr key={row.key}>
-                            <td colSpan={9} style={{ fontWeight: 700, background: '#f8fafc' }}>
+                            <td colSpan={8} style={{ fontWeight: 700, background: '#f8fafc' }}>
                               Cidade: {row.city}
                             </td>
                           </tr>
@@ -3975,7 +3973,6 @@ function App() {
                             </span>
                           </td>
                           <td>{row.estimatedUsedSlots10 ?? 0}</td>
-                          <td>{row.estimatedUsedSlots15 ?? 0}</td>
                           <td>{row.availableSlots10 ?? 0}</td>
                           <td>{row.availableSlots15 ?? 0}</td>
                         </tr>
