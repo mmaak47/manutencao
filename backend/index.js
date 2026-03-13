@@ -1756,6 +1756,36 @@ app.post('/contacts', authenticateToken, async (req, res) => {
   }
 });
 
+app.patch('/contacts/:id', authenticateToken, async (req, res) => {
+  try {
+    const id = getPositiveInt(req.params.id);
+    if (!id) return res.status(400).json({ error: 'ID inválido' });
+    const contact = await Contact.findByPk(id);
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+
+    const { name, phone, targetType, targetValue } = req.body;
+    if (!name || !phone || !targetType || !targetValue) {
+      return res.status(400).json({ error: 'name, phone, targetType and targetValue are required' });
+    }
+    if (!['local', 'screen'].includes(targetType)) {
+      return res.status(400).json({ error: 'Invalid targetType' });
+    }
+
+    // Check unique constraint for the new targetType/targetValue (if changed)
+    if (targetType !== contact.targetType || targetValue !== contact.targetValue) {
+      const existing = await Contact.findOne({ where: { targetType, targetValue } });
+      if (existing && existing.id !== contact.id) {
+        return res.status(409).json({ error: 'Já existe um contato para esse local/tela.' });
+      }
+    }
+
+    await contact.update({ name: name.trim(), phone: phone.trim(), targetType, targetValue: String(targetValue) });
+    res.json(contact);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.delete('/contacts/:id', authenticateToken, async (req, res) => {
   try {
     const contact = await Contact.findByPk(req.params.id);

@@ -102,6 +102,8 @@ function App() {
   const [contactTarget, setContactTarget] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [showContactModal, setShowContactModal] = useState(false);
+  const [editingContact, setEditingContact] = useState(null);
+  const [contactSearch, setContactSearch] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(30);
@@ -502,6 +504,7 @@ function App() {
         setShowChangePasswordModal(false);
         setShowRegisterModal(false);
         setShowContactModal(false);
+        setEditingContact(null);
       }
     };
 
@@ -847,24 +850,44 @@ function App() {
     }
 
     try {
-      await axios.post(`${API_BASE}/contacts`, {
-        name: contactName.trim(),
-        phone: formatPhone(contactPhone),
-        targetType,
-        targetValue
-      }, authConfig);
+      if (editingContact) {
+        await axios.patch(`${API_BASE}/contacts/${editingContact.id}`, {
+          name: contactName.trim(),
+          phone: formatPhone(contactPhone),
+          targetType,
+          targetValue
+        }, authConfig);
+        showAlert('Contato atualizado com sucesso.', 'success');
+      } else {
+        await axios.post(`${API_BASE}/contacts`, {
+          name: contactName.trim(),
+          phone: formatPhone(contactPhone),
+          targetType,
+          targetValue
+        }, authConfig);
+        showAlert('Contato salvo com sucesso.', 'success');
+      }
 
       setContactName('');
       setContactTarget('');
       setContactPhone('');
+      setEditingContact(null);
       await fetchContacts();
-      showAlert('Contato salvo com sucesso.', 'success');
       return true;
     } catch (err) {
       const message = err.response?.data?.error || err.message;
       showAlert('Erro ao salvar contato: ' + message, 'error');
       return false;
     }
+  };
+
+  const openEditContact = (contact) => {
+    setEditingContact(contact);
+    setContactName(contact.name || '');
+    setContactPhone(contact.phone || '');
+    const prefix = contact.targetType === 'local' ? 'local' : 'screen';
+    setContactTarget(`${prefix}:${contact.targetValue}`);
+    setShowContactModal(true);
   };
 
   const deleteContact = async (contactId) => {
@@ -1531,8 +1554,18 @@ function App() {
     return (left.name || '').toLowerCase().localeCompare((right.name || '').toLowerCase());
   });
 
+  const filteredContactsList = contactSearch.trim()
+    ? contactsList.filter((c) => {
+        const q = contactSearch.trim().toLowerCase();
+        return (
+          (c.name || '').toLowerCase().includes(q) ||
+          (c.targetValue || '').toLowerCase().includes(q)
+        );
+      })
+    : contactsList;
+
   const getTargetLabel = (contact) => {
-    if (contact.targetType === 'local') return `Local: ${contact.targetValue}`;
+    if (contact.targetType === 'local') return contact.targetValue;
     const screen = screens.find((item) => String(item.id) === String(contact.targetValue));
     return screen ? `Tela: ${screen.name}` : `Tela: #${contact.targetValue}`;
   };
@@ -3487,25 +3520,43 @@ function App() {
             <h3><FiPhone size={18} /> Contatos dos Responsáveis</h3>
             <p>Cadastre: Nome | Local | Contato.</p>
           </div>
-          <button className="btn-primary" onClick={() => setShowContactModal(true)}>
+          <button className="btn-primary" onClick={() => { setEditingContact(null); setContactName(''); setContactTarget(''); setContactPhone(''); setShowContactModal(true); }}>
             <FiPlus size={14} /> Adicionar Contato
           </button>
         </div>
 
-        {contactsList.length === 0 ? (
+        <div className="contacts-search-bar">
+          <FiSearch size={15} />
+          <input
+            type="text"
+            placeholder="Buscar por nome ou local..."
+            value={contactSearch}
+            onChange={(e) => setContactSearch(e.target.value)}
+          />
+          {contactSearch && (
+            <button className="contacts-search-clear" onClick={() => setContactSearch('')}>×</button>
+          )}
+        </div>
+
+        {filteredContactsList.length === 0 ? (
           <div className="contacts-empty">
             <FiPhone size={32} />
-            <p>Nenhum contato cadastrado ainda.</p>
+            <p>{contactSearch ? 'Nenhum contato encontrado para essa busca.' : 'Nenhum contato cadastrado ainda.'}</p>
           </div>
         ) : (
           <div className="contacts-grid">
-            {contactsList.map((contact) => (
+            {filteredContactsList.map((contact) => (
               <div key={contact.id} className="contact-card">
                 <div className="contact-card-top">
                   <strong>{contact.name}</strong>
-                  <button className="btn-secondary" onClick={() => deleteContact(contact.id)}>
-                    <FiTrash2 size={14} /> Remover
-                  </button>
+                  <div className="contact-card-actions">
+                    <button className="btn-icon" title="Editar" onClick={() => openEditContact(contact)}>
+                      <FiEdit size={14} />
+                    </button>
+                    <button className="btn-secondary" onClick={() => deleteContact(contact.id)}>
+                      <FiTrash2 size={14} /> Remover
+                    </button>
+                  </div>
                 </div>
                 <div className="contact-card-row">
                   <span>Local:</span>
@@ -4881,11 +4932,11 @@ function App() {
       )}
 
       {showContactModal && (
-        <div className="modal-overlay" onClick={() => setShowContactModal(false)}>
+        <div className="modal-overlay" onClick={() => { setShowContactModal(false); setEditingContact(null); }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Adicionar Contato</h2>
-              <button className="modal-close" onClick={() => setShowContactModal(false)}>×</button>
+              <h2>{editingContact ? 'Editar Contato' : 'Adicionar Contato'}</h2>
+              <button className="modal-close" onClick={() => { setShowContactModal(false); setEditingContact(null); }}>×</button>
             </div>
             <div className="modal-body contacts-form-modal">
               <input
@@ -4921,15 +4972,15 @@ function App() {
               />
             </div>
             <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setShowContactModal(false)}>Cancelar</button>
+              <button className="btn-secondary" onClick={() => { setShowContactModal(false); setEditingContact(null); }}>Cancelar</button>
               <button
                 className="btn-primary"
                 onClick={async () => {
-                  const created = await saveContact();
-                  if (created) setShowContactModal(false);
+                  const ok = await saveContact();
+                  if (ok) setShowContactModal(false);
                 }}
               >
-                Salvar
+                {editingContact ? 'Salvar Alterações' : 'Salvar'}
               </button>
             </div>
           </div>
