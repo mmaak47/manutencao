@@ -351,48 +351,70 @@ async function ensureContractColumns() {
     const queryInterface = sequelize.getQueryInterface();
     const tableDefinition = await queryInterface.describeTable('contracts');
 
-    if (!tableDefinition.notified15dAt) {
-      await queryInterface.addColumn('contracts', 'notified15dAt', {
+    if (!tableDefinition.notified15d_at) {
+      await queryInterface.addColumn('contracts', 'notified15d_at', {
         type: DataTypes.DATE,
         allowNull: true
       });
     }
 
-    if (!tableDefinition.notified5dAt) {
-      await queryInterface.addColumn('contracts', 'notified5dAt', {
+    if (!tableDefinition.notified5d_at) {
+      await queryInterface.addColumn('contracts', 'notified5d_at', {
         type: DataTypes.DATE,
         allowNull: true
       });
     }
 
-    if (!tableDefinition.salesFollowUpStatus) {
-      await queryInterface.addColumn('contracts', 'salesFollowUpStatus', {
+    if (!tableDefinition.sales_follow_up_status) {
+      await queryInterface.addColumn('contracts', 'sales_follow_up_status', {
         type: DataTypes.STRING,
         allowNull: false,
         defaultValue: 'pending'
       });
     }
 
-    if (!tableDefinition.salesContactedAt) {
-      await queryInterface.addColumn('contracts', 'salesContactedAt', {
+    if (!tableDefinition.sales_contacted_at) {
+      await queryInterface.addColumn('contracts', 'sales_contacted_at', {
         type: DataTypes.DATE,
         allowNull: true
       });
     }
 
-    if (!tableDefinition.salesOutcomeAt) {
-      await queryInterface.addColumn('contracts', 'salesOutcomeAt', {
+    if (!tableDefinition.sales_outcome_at) {
+      await queryInterface.addColumn('contracts', 'sales_outcome_at', {
         type: DataTypes.DATE,
         allowNull: true
       });
     }
 
-    if (!tableDefinition.salesUpdatedBy) {
-      await queryInterface.addColumn('contracts', 'salesUpdatedBy', {
+    if (!tableDefinition.sales_updated_by) {
+      await queryInterface.addColumn('contracts', 'sales_updated_by', {
         type: DataTypes.STRING,
         allowNull: true
       });
     }
+
+    // Backfill values from mistakenly created camelCase columns, if they exist.
+    if (tableDefinition.notified15dAt) {
+      await sequelize.query('UPDATE contracts SET notified15d_at = COALESCE(notified15d_at, notified15dAt)');
+    }
+    if (tableDefinition.notified5dAt) {
+      await sequelize.query('UPDATE contracts SET notified5d_at = COALESCE(notified5d_at, notified5dAt)');
+    }
+    if (tableDefinition.salesFollowUpStatus) {
+      await sequelize.query('UPDATE contracts SET sales_follow_up_status = COALESCE(sales_follow_up_status, salesFollowUpStatus, "pending")');
+    }
+    if (tableDefinition.salesContactedAt) {
+      await sequelize.query('UPDATE contracts SET sales_contacted_at = COALESCE(sales_contacted_at, salesContactedAt)');
+    }
+    if (tableDefinition.salesOutcomeAt) {
+      await sequelize.query('UPDATE contracts SET sales_outcome_at = COALESCE(sales_outcome_at, salesOutcomeAt)');
+    }
+    if (tableDefinition.salesUpdatedBy) {
+      await sequelize.query('UPDATE contracts SET sales_updated_by = COALESCE(sales_updated_by, salesUpdatedBy)');
+    }
+
+    await sequelize.query("UPDATE contracts SET sales_follow_up_status = 'pending' WHERE sales_follow_up_status IS NULL OR sales_follow_up_status = ''");
   } catch (err) {
     console.error('Failed to ensure contracts columns:', err.message);
   }
