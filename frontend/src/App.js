@@ -3,6 +3,7 @@ import axios from 'axios';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { FiMonitor, FiCheckCircle, FiAlertCircle, FiMinusCircle, FiPlus, FiSearch, FiClock, FiLogOut, FiUserPlus, FiPhone, FiTrash2, FiChevronDown, FiChevronUp, FiKey, FiBarChart2, FiFileText, FiPrinter, FiDatabase, FiDownload, FiSettings, FiMenu, FiRefreshCw, FiEdit, FiEye, FiEyeOff, FiStar, FiCalendar, FiMapPin, FiPackage, FiTag, FiUser, FiTool, FiChevronLeft, FiChevronRight, FiMoon, FiSun, FiClipboard, FiZap, FiTrendingUp, FiActivity, FiBell, FiSend, FiToggleLeft, FiToggleRight, FiDollarSign, FiUserCheck } from 'react-icons/fi';
 import logo from './assets/logo.png';
+import logoBlack from './assets/logo-black.png';
 import Analytics from './Analytics';
 import NotificationCenter from './NotificationCenter';
 import './App.css';
@@ -2296,7 +2297,7 @@ function App() {
         <div className="login-container">
           <div className="login-box">
             <div className="login-header">
-              <img src={logo} className="login-logo" alt="Logo Intermídia" />
+              <img src={logoBlack} className="login-logo" alt="Logo Intermídia" />
               <h1>Carregando sessão...</h1>
               <p>Validando credenciais de acesso</p>
             </div>
@@ -2327,7 +2328,7 @@ function App() {
               ) : (
                 <>
                   <div className="login-header">
-                    <img src={logo} className="login-logo" alt="Logo Intermídia" />
+                    <img src={logoBlack} className="login-logo" alt="Logo Intermídia" />
                     <h1>Solicitar Acesso</h1>
                     <p>Preencha seus dados para se cadastrar como técnico</p>
                   </div>
@@ -2444,7 +2445,7 @@ function App() {
         <div className="login-container">
           <div className="login-box">
             <div className="login-header">
-              <img src={logo} className="login-logo" alt="Logo Intermídia" />
+              <img src={logoBlack} className="login-logo" alt="Logo Intermídia" />
               <h1>Manutenções</h1>
               <p>Acesse sua conta para continuar</p>
             </div>
