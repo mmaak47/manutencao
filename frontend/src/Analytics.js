@@ -53,7 +53,7 @@ function Analytics({ authToken, onClose }) {
       link.setAttribute('download', fileName);
       document.body.appendChild(link);
       link.click();
-      link.parentChild.removeChild(link);
+      document.body.removeChild(link);
     } catch (err) {
       alert('Exportação falhou: ' + err.message);
     } finally {
@@ -66,7 +66,7 @@ function Analytics({ authToken, onClose }) {
       <div className="analytics-modal">
         <div className="analytics-content">
           <div className="analytics-header">
-            <h2>  Analytics & Dashboard</h2>
+            <h2>Analytics & Dashboard</h2>
             <button className="close-btn" onClick={onClose}>
               <FiX />
             </button>
@@ -111,7 +111,7 @@ function Analytics({ authToken, onClose }) {
           <h3>Visão Geral do Sistema</h3>
           <div className="kpi-grid">
             <div className="kpi-card">
-              <div className="kpi-icon" style={{ color: '#ff7a18' }}>
+              <div className="kpi-icon kpi-icon-accent">
                 <FiTrendingUp />
               </div>
               <div className="kpi-content">
@@ -121,7 +121,7 @@ function Analytics({ authToken, onClose }) {
             </div>
 
             <div className="kpi-card">
-              <div className="kpi-icon" style={{ color: '#10b981' }}>
+              <div className="kpi-icon kpi-icon-success">
                 <FiActivity />
               </div>
               <div className="kpi-content">
@@ -132,7 +132,7 @@ function Analytics({ authToken, onClose }) {
             </div>
 
             <div className="kpi-card">
-              <div className="kpi-icon" style={{ color: '#ef4444' }}>
+              <div className="kpi-icon kpi-icon-danger">
                 <FiAlertCircle />
               </div>
               <div className="kpi-content">
@@ -142,7 +142,7 @@ function Analytics({ authToken, onClose }) {
             </div>
 
             <div className="kpi-card">
-              <div className="kpi-icon" style={{ color: '#667eea' }}>
+              <div className="kpi-icon kpi-icon-warning">
                 <FiAlertCircle />
               </div>
               <div className="kpi-content">
@@ -158,21 +158,21 @@ function Analytics({ authToken, onClose }) {
           <h3>Distribuição de Status do Workflow</h3>
           <div className="status-grid">
             <div className="status-item">
-              <FiClock className="status-icon" style={{ color: '#ff7a18' }} />
+              <FiClock className="status-icon status-icon-accent" />
               <div>
                 <div className="status-value">{analytics.workflow.todo}</div>
                 <div className="status-label">A Fazer</div>
               </div>
             </div>
             <div className="status-item">
-              <FiActivity className="status-icon" style={{ color: '#667eea' }} />
+              <FiActivity className="status-icon status-icon-warning" />
               <div>
                 <div className="status-value">{analytics.workflow.ontheway}</div>
                 <div className="status-label">Em Andamento</div>
               </div>
             </div>
             <div className="status-item">
-              <FiCheckCircle className="status-icon" style={{ color: '#10b981' }} />
+              <FiCheckCircle className="status-icon status-icon-success" />
               <div>
                 <div className="status-value">{analytics.workflow.complete}</div>
                 <div className="status-label">Concluído</div>
@@ -223,9 +223,9 @@ function Analytics({ authToken, onClose }) {
                   <tr key={loc}>
                     <td>{loc}</td>
                     <td><strong>{stats.total}</strong></td>
-                    <td><span style={{ color: '#10b981' }}>{stats.online}</span></td>
-                    <td><span style={{ color: '#ef4444' }}>{stats.offline}</span></td>
-                    <td><span style={{ color: '#ff7a18' }}>{stats.critical}</span></td>
+                    <td><span className="value-positive">{stats.online}</span></td>
+                    <td><span className="value-negative">{stats.offline}</span></td>
+                    <td><span className="value-warning">{stats.critical}</span></td>
                   </tr>
                 ))}
               </tbody>

@@ -3458,6 +3458,51 @@
 
 .empty-message svg { opacity: 0.2; margin-bottom: 10px; }
 
+/* ===== GLOBAL MODERN STANDARDS ===== */
+.page-content :where(input:not([type='checkbox']):not([type='radio']):not([type='file']), select, textarea) {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #FFFFFF;
+  color: var(--text);
+  font-family: 'Montserrat', sans-serif;
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+
+.page-content :where(input:not([type='checkbox']):not([type='radio']):not([type='file']), select, textarea):focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.page-content :where(button, .btn-secondary, .btn-icon-primary, .btn-origin-edit, .btn-edit-info, .btn-primary, .batch-action-btn, .link-btn):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.page-content :where(table) {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.page-content :where(thead th) {
+  background: var(--bg);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.page-content :where(tbody tr) {
+  transition: background var(--transition);
+}
+
+.page-content :where(tbody tr:hover) {
+  background: var(--accent-lighter);
+}
+
+.page-content :where(.cards-grid, .stats-grid, .contracts-summary, .loop-summary-cards) > * {
+  backdrop-filter: saturate(1.08);
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 1200px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
