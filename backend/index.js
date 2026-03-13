@@ -774,6 +774,23 @@ async function processTicketSlaEscalations() {
 async function processPreventiveSchedules() {
   const learningStatus = getPreventiveLearningStatus();
   if (learningStatus.active) {
+    const pendingAutoSchedules = await Schedule.findAll({
+      where: {
+        status: 'scheduled',
+        createdBy: 'system',
+        title: { [Op.like]: 'Preventiva automática%' }
+      }
+    });
+
+    if (pendingAutoSchedules.length) {
+      const scheduleIds = pendingAutoSchedules.map((item) => item.id);
+      await Schedule.update(
+        { status: 'cancelled' },
+        { where: { id: { [Op.in]: scheduleIds } } }
+      );
+      console.log(`Preventive learning mode: cancelled ${pendingAutoSchedules.length} automatic preventive schedule(s).`);
+    }
+
     const logKey = `${learningStatus.startDate}-${learningStatus.endDate}-${learningStatus.remainingDays}`;
     if (preventiveLearningLastLogKey !== logKey) {
       console.log(`Preventive automation paused (learning mode). Remaining: ${learningStatus.remainingDays} day(s). Start: ${learningStatus.startDate}. End: ${learningStatus.endDate}.`);
