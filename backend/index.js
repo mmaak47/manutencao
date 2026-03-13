@@ -73,6 +73,32 @@ function validatePasswordStrength(password) {
     && /[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\\/]/.test(password);
 }
 
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || '').trim());
+}
+
+function normalizeEmail(email) {
+  return (email || '').trim().toLowerCase();
+}
+
+function sanitizeUsernameCandidate(value) {
+  return (value || '').toLowerCase().replace(/[^a-z0-9._-]/g, '');
+}
+
+async function generateUniqueUsername(email, fallback = 'user') {
+  let base = sanitizeUsernameCandidate((email || '').split('@')[0]);
+  if (!base) {
+    base = sanitizeUsernameCandidate(fallback) || 'user';
+  }
+
+  let candidate = base;
+  let counter = 1;
+  while (await User.findOne({ where: { username: candidate } })) {
+    candidate = `${base}${counter++}`;
+  }
+  return candidate;
+}
+
 // Initialize database
 sequelize.sync().then(async () => {
   await ensureScreenColumns();
@@ -180,6 +206,37 @@ async function ensureUserColumns() {
         defaultValue: true
       });
     }
+
+    if (!tableDefinition.email) {
+      await queryInterface.addColumn('users', 'email', {
+        type: DataTypes.STRING,
+        allowNull: true
+      });
+      try {
+        await sequelize.query('CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email) WHERE email IS NOT NULL');
+      } catch (e) { /* index may already exist */ }
+    }
+
+    const usersWithoutEmail = await User.findAll({ where: { email: null } });
+    for (const user of usersWithoutEmail) {
+      if (user.username && user.username.includes('@')) {
+        const candidate = normalizeEmail(user.username);
+        const taken = await User.findOne({ where: { email: candidate } });
+        if (!taken) {
+          await user.update({ email: candidate });
+          continue;
+        }
+      }
+
+      const reg = await TechRegistration.findOne({ where: { status: 'approved', passwordHash: user.passwordHash } });
+      if (reg?.email) {
+        const candidate = normalizeEmail(reg.email);
+        const taken = await User.findOne({ where: { email: candidate } });
+        if (!taken || taken.id === user.id) {
+          await user.update({ email: candidate });
+        }
+      }
+    }
   } catch (err) {
     console.error('Failed to ensure users columns:', err.message);
   }
@@ -238,11 +295,12 @@ async function bootstrapAdmin() {
     if (adminCount > 0) return;
 
     const username = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
+    const email = normalizeEmail(process.env.DEFAULT_ADMIN_EMAIL || 'admin@intermidia.local');
     const password = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
     const passwordHash = await bcrypt.hash(password, 10);
 
-    await User.create({ username, passwordHash, role: 'admin' });
-    console.log(`Default admin created: ${username}`);
+    await User.create({ username, email, passwordHash, role: 'admin' });
+    console.log(`Default admin created: ${email}`);
   } catch (err) {
     console.error('Failed to bootstrap default admin:', err.message);
   }
@@ -250,7 +308,7 @@ async function bootstrapAdmin() {
 
 function createToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
+    { id: user.id, username: user.username, email: user.email, role: user.role },
     JWT_SECRET,
     { expiresIn: '12h' }
   );
@@ -258,19 +316,31 @@ function createToken(user) {
 
 app.post('/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Preencha usuário e senha' });
+    const { email, username, password } = req.body;
+    const identifier = normalizeEmail(email || username);
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Preencha e-mail e senha' });
     }
 
-    const user = await User.findOne({ where: { username } });
+    const user = await User.findOne({
+      where: {
+        [Op.or]: [
+          { email: identifier },
+          { username: identifier }
+        ]
+      }
+    });
     if (!user) {
-      return res.status(401).json({ error: 'Usuário ou senha incorreto' });
+      return res.status(401).json({ error: 'E-mail ou senha incorreto' });
+    }
+
+    if (user.active === false) {
+      return res.status(403).json({ error: 'Usuário desativado. Fale com um administrador.' });
     }
 
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
-      return res.status(401).json({ error: 'Usuário ou senha incorreto' });
+      return res.status(401).json({ error: 'E-mail ou senha incorreto' });
     }
 
     const token = createToken(user);
@@ -279,6 +349,7 @@ app.post('/auth/login', async (req, res) => {
       user: {
         id: user.id,
         username: user.username,
+        email: user.email,
         role: user.role
       }
     });
@@ -290,7 +361,7 @@ app.post('/auth/login', async (req, res) => {
 app.get('/auth/me', authenticateToken, async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
-      attributes: ['id', 'username', 'role']
+      attributes: ['id', 'username', 'email', 'role']
     });
 
     if (!user) {
@@ -305,24 +376,48 @@ app.get('/auth/me', authenticateToken, async (req, res) => {
 
 app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { username, password, role } = req.body;
+    const { username, email, password, role } = req.body;
+    const normalizedEmail = normalizeEmail(email);
 
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    if (!normalizedEmail || !password) {
+      return res.status(400).json({ error: 'E-mail e senha são obrigatórios' });
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ error: 'E-mail inválido' });
     }
 
     const normalizedRole = role === 'admin' ? 'admin' : 'user';
-    const existingUser = await User.findOne({ where: { username } });
-    if (existingUser) {
-      return res.status(409).json({ error: 'Username already exists' });
+    const existingEmail = await User.findOne({ where: { email: normalizedEmail } });
+    if (existingEmail) {
+      return res.status(409).json({ error: 'E-mail já cadastrado' });
     }
 
+    const preferredUsername = sanitizeUsernameCandidate(username);
+    const resolvedUsername = preferredUsername
+      ? (await (async () => {
+        let candidate = preferredUsername;
+        let counter = 1;
+        while (await User.findOne({ where: { username: candidate } })) {
+          candidate = `${preferredUsername}${counter++}`;
+        }
+        return candidate;
+      })())
+      : await generateUniqueUsername(normalizedEmail, normalizedRole === 'admin' ? 'admin' : 'user');
+
     const passwordHash = await bcrypt.hash(password, 10);
-    const newUser = await User.create({ username, passwordHash, role: normalizedRole });
+    const newUser = await User.create({
+      username: resolvedUsername,
+      email: normalizedEmail,
+      passwordHash,
+      role: normalizedRole,
+      active: true
+    });
 
     res.status(201).json({
       id: newUser.id,
       username: newUser.username,
+      email: newUser.email,
       role: newUser.role
     });
   } catch (err) {
@@ -378,8 +473,7 @@ app.post('/auth/self-register', async (req, res) => {
       return res.status(400).json({ error: 'CPF inválido.' });
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'E-mail inválido.' });
     }
 
@@ -392,9 +486,15 @@ app.post('/auth/self-register', async (req, res) => {
     if (existing) {
       return res.status(409).json({ error: 'Este CPF já possui uma solicitação registrada.' });
     }
-    const existingEmail = await TechRegistration.findOne({ where: { email: email.toLowerCase() } });
+    const normalizedEmail = normalizeEmail(email);
+    const existingEmail = await TechRegistration.findOne({ where: { email: normalizedEmail } });
     if (existingEmail) {
       return res.status(409).json({ error: 'Este e-mail já possui uma solicitação registrada.' });
+    }
+
+    const existingUserEmail = await User.findOne({ where: { email: normalizedEmail } });
+    if (existingUserEmail) {
+      return res.status(409).json({ error: 'Este e-mail já está em uso no sistema.' });
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
@@ -402,7 +502,7 @@ app.post('/auth/self-register', async (req, res) => {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       cpf: cpfClean,
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       passwordHash,
       photoData: photoData || null,
       status: 'pending'
@@ -441,17 +541,17 @@ app.post('/admin/registrations/:id/approve', authenticateToken, requireAdmin, as
     const reg = await TechRegistration.findByPk(req.params.id);
     if (!reg || reg.status !== 'pending') return res.status(400).json({ error: 'Solicitação não encontrada ou já processada.' });
 
-    // Generate username from email prefix
-    let baseUsername = reg.email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g, '');
-    if (!baseUsername) baseUsername = reg.firstName.toLowerCase();
-    let username = baseUsername;
-    let counter = 1;
-    while (await User.findOne({ where: { username } })) { username = baseUsername + counter++; }
+    const email = normalizeEmail(reg.email);
+    const existingUser = await User.findOne({ where: { email } });
+    if (existingUser) {
+      return res.status(409).json({ error: 'Já existe usuário ativo com este e-mail.' });
+    }
 
-    const newUser = await User.create({ username, passwordHash: reg.passwordHash, role: 'user', active: true });
+    const username = await generateUniqueUsername(email, reg.firstName);
+    const newUser = await User.create({ username, email, passwordHash: reg.passwordHash, role: 'user', active: true });
     await reg.update({ status: 'approved', reviewedBy: req.user.username, reviewedAt: new Date() });
-    await logAudit(req, 'approve', 'tech_registration', reg.id, { username, name: `${reg.firstName} ${reg.lastName}` });
-    res.json({ success: true, username, userId: newUser.id });
+    await logAudit(req, 'approve', 'tech_registration', reg.id, { username, email, name: `${reg.firstName} ${reg.lastName}` });
+    res.json({ success: true, username, email, userId: newUser.id });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2095,8 +2195,8 @@ app.get('/users', authenticateToken, async (req, res) => {
   try {
     const users = await User.findAll({
       where: { active: true },
-      attributes: ['id', 'username', 'role', 'active'],
-      order: [['username', 'ASC']]
+      attributes: ['id', 'username', 'email', 'role', 'active'],
+      order: [['email', 'ASC']]
     });
     res.json(users);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2106,7 +2206,7 @@ app.get('/users', authenticateToken, async (req, res) => {
 app.get('/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const users = await User.findAll({
-      attributes: ['id', 'username', 'role', 'active', 'createdAt', 'updatedAt'],
+      attributes: ['id', 'username', 'email', 'role', 'active', 'createdAt', 'updatedAt'],
       order: [['createdAt', 'ASC']]
     });
     res.json(users);
@@ -2159,6 +2259,7 @@ app.patch('/admin/users/:id', authenticateToken, requireAdmin, async (req, res) 
     res.json({
       id: user.id,
       username: user.username,
+      email: user.email,
       role: user.role,
       active: user.active,
       createdAt: user.createdAt,

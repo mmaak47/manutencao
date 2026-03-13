@@ -48,13 +48,13 @@ function App() {
       return null;
     }
   });
-  const [loginUsername, setLoginUsername] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
-  const [registerUsername, setRegisterUsername] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [registerRole, setRegisterRole] = useState('user');
   const [currentPasswordInput, setCurrentPasswordInput] = useState('');
@@ -981,15 +981,15 @@ function App() {
     e.preventDefault();
     setLoginError('');
     
-    if (!loginUsername.trim() || !loginPassword.trim()) {
-      setLoginError('Preencha usuário e senha');
+    if (!loginEmail.trim() || !loginPassword.trim()) {
+      setLoginError('Preencha e-mail e senha');
       return;
     }
     
     setIsLoggingIn(true);
     try {
       const res = await axios.post(`${API_BASE}/auth/login`, {
-        username: loginUsername,
+        email: loginEmail,
         password: loginPassword
       });
       setAuthToken(res.data.token);
@@ -1051,19 +1051,19 @@ function App() {
   };
 
   const registerUser = async () => {
-    if (!registerUsername.trim() || !registerPassword.trim()) {
-      showAlert('Informe usuário e senha', 'warning');
+    if (!registerEmail.trim() || !registerPassword.trim()) {
+      showAlert('Informe e-mail e senha', 'warning');
       return;
     }
 
     try {
       await axios.post(`${API_BASE}/auth/register`, {
-        username: registerUsername.trim(),
+        email: registerEmail.trim(),
         password: registerPassword,
         role: registerRole
       }, authConfig);
 
-      setRegisterUsername('');
+      setRegisterEmail('');
       setRegisterPassword('');
       setRegisterRole('user');
       setShowRegisterModal(false);
@@ -2340,12 +2340,12 @@ function App() {
             </div>
             <form className="login-form" onSubmit={handleLogin}>
               <div className="form-group">
-                <label>Usuário</label>
+                <label>E-mail</label>
                 <input
-                  type="text"
-                  placeholder="Digite seu usuário"
-                  value={loginUsername}
-                  onChange={(e) => setLoginUsername(e.target.value)}
+                  type="email"
+                  placeholder="Digite seu e-mail"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
                   autoFocus
                 />
               </div>
@@ -4560,10 +4560,10 @@ function App() {
             </div>
             <div className="modal-body">
               <input
-                type="text"
-                placeholder="Novo usuário"
-                value={registerUsername}
-                onChange={(e) => setRegisterUsername(e.target.value)}
+                type="email"
+                placeholder="E-mail do usuário"
+                value={registerEmail}
+                onChange={(e) => setRegisterEmail(e.target.value)}
                 className="note-author"
               />
               <input
