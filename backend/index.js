@@ -46,6 +46,8 @@ const SLA_AUTOMATION_INTERVAL_MS = 15 * 60 * 1000;
 const PREVENTIVE_LOOKBACK_DAYS = 45;
 const PREVENTIVE_TELEMETRY_LOOKBACK_HOURS = 72;
 const MAX_PREVENTIVE_PER_DAY = Number(process.env.MAX_PREVENTIVE_PER_DAY || 2);
+const CONTRACT_NOTIFY_THRESHOLDS_DAYS = [15, 5];
+const CONTRACT_TOTAL_CYCLE_SLOTS = Number(process.env.CONTRACT_TOTAL_CYCLE_SLOTS || 3);
 
 function calculateTicketCost(ticket) {
   const timeSpentMinutes = Number(ticket?.timeSpentMinutes) || 0;
@@ -158,6 +160,7 @@ sequelize.sync().then(async () => {
   await ensureScreenColumns();
   await ensureUserColumns();
   await ensureTicketColumns();
+  await ensureContractColumns();
   console.log('Database synced');
   bootstrapAdmin();
   setTimeout(() => {
@@ -327,6 +330,58 @@ async function ensureTicketColumns() {
     }
   } catch (err) {
     console.error('Failed to ensure tickets columns:', err.message);
+  }
+}
+
+async function ensureContractColumns() {
+  try {
+    const queryInterface = sequelize.getQueryInterface();
+    const tableDefinition = await queryInterface.describeTable('contracts');
+
+    if (!tableDefinition.notified15dAt) {
+      await queryInterface.addColumn('contracts', 'notified15dAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      });
+    }
+
+    if (!tableDefinition.notified5dAt) {
+      await queryInterface.addColumn('contracts', 'notified5dAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      });
+    }
+
+    if (!tableDefinition.salesFollowUpStatus) {
+      await queryInterface.addColumn('contracts', 'salesFollowUpStatus', {
+        type: DataTypes.STRING,
+        allowNull: false,
+        defaultValue: 'pending'
+      });
+    }
+
+    if (!tableDefinition.salesContactedAt) {
+      await queryInterface.addColumn('contracts', 'salesContactedAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      });
+    }
+
+    if (!tableDefinition.salesOutcomeAt) {
+      await queryInterface.addColumn('contracts', 'salesOutcomeAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      });
+    }
+
+    if (!tableDefinition.salesUpdatedBy) {
+      await queryInterface.addColumn('contracts', 'salesUpdatedBy', {
+        type: DataTypes.STRING,
+        allowNull: true
+      });
+    }
+  } catch (err) {
+    console.error('Failed to ensure contracts columns:', err.message);
   }
 }
 
@@ -2692,11 +2747,62 @@ app.delete('/vendors/:id', authenticateToken, requireAdmin, async (req, res) => 
 });
 
 // ===== CONTRACTS =====
-app.get('/contracts', authenticateToken, requireAdmin, async (req, res) => {
+app.get('/contracts', authenticateToken, async (req, res) => {
   try {
     const contracts = await Contract.findAll({ include: [{ model: Vendor, required: false }], order: [['expirationDate', 'ASC']] });
-    res.json(contracts);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const occupiedSlotsCurrentCycle = contracts.filter((contract) => {
+      if (!contract.expirationDate) return false;
+      const expDate = new Date(`${contract.expirationDate}T00:00:00`);
+      return expDate >= today;
+    }).length;
+
+    res.json(contracts.map((contract) => ({
+      ...contract.toJSON(),
+      occupiedSlotsCurrentCycle,
+      totalCycleSlots: CONTRACT_TOTAL_CYCLE_SLOTS
+    })));
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/contracts/:id/follow-up', authenticateToken, async (req, res) => {
+  try {
+    const contract = await Contract.findByPk(req.params.id);
+    if (!contract) return res.status(404).json({ error: 'Contrato não encontrado' });
+
+    const action = String(req.body?.action || '').trim();
+    const now = new Date();
+
+    if (!['contacted', 'renewed', 'not_renewed', 'reset'].includes(action)) {
+      return res.status(400).json({ error: 'Ação inválida. Use: contacted, renewed, not_renewed ou reset.' });
+    }
+
+    const update = { salesUpdatedBy: req.user?.username || null };
+    if (action === 'contacted') {
+      update.salesFollowUpStatus = 'contacted';
+      update.salesContactedAt = contract.salesContactedAt || now;
+      update.salesOutcomeAt = null;
+    } else if (action === 'renewed') {
+      update.salesFollowUpStatus = 'renewed';
+      update.salesContactedAt = contract.salesContactedAt || now;
+      update.salesOutcomeAt = now;
+    } else if (action === 'not_renewed') {
+      update.salesFollowUpStatus = 'not_renewed';
+      update.salesContactedAt = contract.salesContactedAt || now;
+      update.salesOutcomeAt = now;
+    } else {
+      update.salesFollowUpStatus = 'pending';
+      update.salesContactedAt = null;
+      update.salesOutcomeAt = null;
+      update.salesUpdatedBy = req.user?.username || null;
+    }
+
+    await contract.update(update);
+    res.json(contract);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/contracts/:id', authenticateToken, requireAdmin, async (req, res) => {
@@ -3835,29 +3941,44 @@ async function checkExpiringContracts() {
       const expDate = new Date(contract.expirationDate + 'T00:00:00');
       const diffMs = expDate - today;
       const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      
-      // Update days remaining
-      if (contract.daysRemaining !== daysRemaining) {
-        await contract.update({ daysRemaining });
+
+      const updatePayload = {};
+      if (contract.daysRemaining !== daysRemaining) updatePayload.daysRemaining = daysRemaining;
+
+      // Reset milestone flags if contract moved away from window (e.g. renewed/extended in origin).
+      if (daysRemaining > 15 && (contract.notified15dAt || contract.notified5dAt || contract.notified)) {
+        updatePayload.notified = false;
+        updatePayload.lastNotifiedAt = null;
+        updatePayload.notified15dAt = null;
+        updatePayload.notified5dAt = null;
       }
 
-      // Only notify if within 15 days and not already notified today
-      if (daysRemaining > 0 && daysRemaining <= 15) {
-        const alreadyNotifiedToday = contract.lastNotifiedAt && 
-          new Date(contract.lastNotifiedAt).toDateString() === today.toDateString();
-        
-        if (!alreadyNotifiedToday) {
-          const vendor = contract.vendorId ? vendors.find(v => v.id === contract.vendorId) : null;
-          if (vendor) {
-            const urgency = daysRemaining <= 5 ? '🔴 URGENTE' : daysRemaining <= 10 ? '🟡 ATENÇÃO' : '🟢 AVISO';
-            const msg = `📋 *CONTRATO A VENCER* ${urgency}\n\nAnunciante: ${contract.advertiser}\nVencimento: ${new Date(contract.expirationDate).toLocaleDateString('pt-BR')}\nValor: R$ ${(contract.value || 0).toLocaleString('pt-BR')}\nDias restantes: ${daysRemaining}\n\n⚠️ Entre em contato para renovação.`;
-            await sendNotification(msg, vendor.phone);
-            await contract.update({ notified: true, lastNotifiedAt: new Date() });
-            notified++;
-            console.log(`Contract notification sent: ${contract.advertiser} -> ${vendor.name} (${daysRemaining} days)`);
-          }
-        }
+      if (Object.keys(updatePayload).length) {
+        await contract.update(updatePayload);
       }
+
+      if (daysRemaining <= 0 || daysRemaining > 15) continue;
+
+      const vendor = contract.vendorId ? vendors.find(v => v.id === contract.vendorId) : null;
+      if (!vendor) continue;
+
+      const shouldNotify15d = daysRemaining <= CONTRACT_NOTIFY_THRESHOLDS_DAYS[0] && !contract.notified15dAt;
+      const shouldNotify5d = daysRemaining <= CONTRACT_NOTIFY_THRESHOLDS_DAYS[1] && !contract.notified5dAt;
+      if (!shouldNotify15d && !shouldNotify5d) continue;
+
+      const urgency = daysRemaining <= 5 ? '🔴 URGENTE' : '🟡 AVISO';
+      const milestone = shouldNotify5d ? '5 dias' : '15 dias';
+      const msg = `📋 *CONTRATO A VENCER* ${urgency}\n\nAnunciante: ${contract.advertiser}\nVencimento: ${new Date(contract.expirationDate).toLocaleDateString('pt-BR')}\nValor: R$ ${(contract.value || 0).toLocaleString('pt-BR')}\nDias restantes: ${daysRemaining}\nMarco: ${milestone}\n\n⚠️ Entre em contato para renovação.`;
+      await sendNotification(msg, vendor.phone);
+
+      await contract.update({
+        notified: true,
+        lastNotifiedAt: new Date(),
+        notified15dAt: shouldNotify15d ? new Date() : contract.notified15dAt,
+        notified5dAt: shouldNotify5d ? new Date() : contract.notified5dAt
+      });
+      notified++;
+      console.log(`Contract notification sent: ${contract.advertiser} -> ${vendor.name} (${daysRemaining} days, marco ${milestone})`);
     }
     if (notified > 0) console.log(`Contract check: ${notified} notifications sent`);
   } catch (err) {

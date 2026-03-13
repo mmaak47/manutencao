@@ -3172,9 +3172,14 @@
 .contract-advertiser { font-weight: 600; color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contract-value { font-weight: 600; color: var(--text); white-space: nowrap; }
 .contract-days { font-size: 13px; white-space: nowrap; }
+.contract-slots { font-weight: 700; color: var(--accent); white-space: nowrap; font-size: 12px; }
 .contract-vendor-linked { margin-left: 6px; color: var(--success); vertical-align: middle; }
 .contract-notified { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--success); }
 .contract-actions-cell { display: flex; gap: 6px; align-items: center; }
+
+.contract-follow-up { display: flex; flex-direction: column; gap: 6px; min-width: 180px; }
+.contract-follow-up-badge { display: inline-flex; width: fit-content; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.contract-follow-up-actions { display: flex; gap: 6px; }
 
 .btn-icon { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text-secondary); cursor: pointer; transition: var(--transition); }
 .btn-icon:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }

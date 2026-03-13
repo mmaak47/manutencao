@@ -1685,6 +1685,7 @@ function App() {
   };
 
   const fetchVendors = async () => {
+    if (currentUser?.role !== 'admin') return [];
     try {
       const res = await axios.get(`${API_BASE}/vendors`, authConfig);
       setVendors(res.data);
@@ -1715,6 +1716,16 @@ function App() {
       fetchContracts();
     } catch (err) {
       showAlert('Erro ao notificar: ' + (err.response?.data?.error || err.message), 'error');
+    }
+  };
+
+  const updateContractFollowUp = async (contractId, action) => {
+    try {
+      await axios.patch(`${API_BASE}/contracts/${contractId}/follow-up`, { action }, authConfig);
+      showAlert('Status comercial atualizado!', 'success');
+      fetchContracts();
+    } catch (err) {
+      showAlert('Erro ao atualizar status: ' + (err.response?.data?.error || err.message), 'error');
     }
   };
 
@@ -1764,6 +1775,13 @@ function App() {
     if (days <= 10) return { color: '#E9A034', bg: '#FFF8ED', icon: '🟡', label: 'Atenção' };
     if (days <= 15) return { color: '#28A745', bg: '#EDFBF0', icon: '🟢', label: 'Próximo' };
     return { color: '#6c757d', bg: '#f8f9fa', icon: '⚪', label: 'OK' };
+  };
+
+  const getFollowUpBadge = (status) => {
+    if (status === 'renewed') return { label: 'Renovado', color: '#2E7D32', bg: '#E9F8EE' };
+    if (status === 'not_renewed') return { label: 'Não renovou', color: '#C62828', bg: '#FDECEC' };
+    if (status === 'contacted') return { label: 'Contatado', color: '#B26A00', bg: '#FFF5E6' };
+    return { label: 'Pendente', color: '#6c757d', bg: '#F3F4F6' };
   };
 
   // Origin sync functions
@@ -2471,14 +2489,12 @@ function App() {
           </button>
 
           <div className="sidebar-section-label">Sistema</div>
-          {currentUser?.role === 'admin' && (
-            <button className={`sidebar-item ${activePage === 'contracts' ? 'active' : ''}`} onClick={() => { setActivePage('contracts'); fetchContracts(); fetchVendors(); }}>
-              <FiDollarSign size={18} /> Contratos
-              {contracts.filter(c => c.daysRemaining <= 15).length > 0 && (
-                <span className="nav-badge warning">{contracts.filter(c => c.daysRemaining <= 15).length}</span>
-              )}
-            </button>
-          )}
+          <button className={`sidebar-item ${activePage === 'contracts' ? 'active' : ''}`} onClick={() => { setActivePage('contracts'); fetchContracts(); if (currentUser?.role === 'admin') fetchVendors(); }}>
+            <FiDollarSign size={18} /> Contratos
+            {contracts.filter(c => c.daysRemaining <= 15).length > 0 && (
+              <span className="nav-badge warning">{contracts.filter(c => c.daysRemaining <= 15).length}</span>
+            )}
+          </button>
           {currentUser?.role === 'admin' && (
             <button className={`sidebar-item ${activePage === 'backups' ? 'active' : ''}`} onClick={() => { setActivePage('backups'); fetchBackups(); }}>
               <FiDatabase size={18} /> Backups
@@ -4130,12 +4146,17 @@ function App() {
         <div className="contracts-header">
           <div className="contracts-title">
             <h3><FiDollarSign size={18} /> Contratos a Vencer</h3>
-            <p>Gerencie contratos e vendedores — notificações automáticas via WhatsApp.</p>
+            <p>
+              Acompanhamento comercial com aviso automático em 15 e 5 dias.
+              Cotas ocupadas no ciclo atual: <strong>{contracts[0]?.occupiedSlotsCurrentCycle || 0}/{contracts[0]?.totalCycleSlots || 3}</strong>
+            </p>
           </div>
           <div className="contracts-actions">
-            <button className="btn-primary" onClick={syncContracts} disabled={contractsSyncing}>
-              <FiRefreshCw size={14} className={contractsSyncing ? 'spin' : ''} /> {contractsSyncing ? 'Sincronizando...' : 'Sincronizar Contratos'}
-            </button>
+            {currentUser?.role === 'admin' && (
+              <button className="btn-primary" onClick={syncContracts} disabled={contractsSyncing}>
+                <FiRefreshCw size={14} className={contractsSyncing ? 'spin' : ''} /> {contractsSyncing ? 'Sincronizando...' : 'Sincronizar Contratos'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -4143,12 +4164,14 @@ function App() {
           <button className={`contracts-tab ${contractsTab === 'contracts' ? 'active' : ''}`} onClick={() => setContractsTab('contracts')}>
             <FiFileText size={14} /> Contratos ({contracts.length})
           </button>
-          <button className={`contracts-tab ${contractsTab === 'vendors' ? 'active' : ''}`} onClick={() => setContractsTab('vendors')}>
-            <FiUserCheck size={14} /> Vendedores ({vendors.length})
-          </button>
+          {currentUser?.role === 'admin' && (
+            <button className={`contracts-tab ${contractsTab === 'vendors' ? 'active' : ''}`} onClick={() => setContractsTab('vendors')}>
+              <FiUserCheck size={14} /> Vendedores ({vendors.length})
+            </button>
+          )}
         </div>
 
-        {contractsTab === 'contracts' ? (
+        {(contractsTab === 'contracts' || currentUser?.role !== 'admin') ? (
           <>
             {contracts.filter(c => c.daysRemaining <= 15).length > 0 && (
               <div className="contracts-alert-banner">
@@ -4163,7 +4186,7 @@ function App() {
               <div className="empty-state">
                 <FiDollarSign size={36} />
                 <p>Nenhum contrato encontrado.</p>
-                <p style={{fontSize: '12px', color: 'var(--text-muted)'}}>Clique em "Sincronizar Contratos" para importar do sistema de origem.</p>
+                <p style={{fontSize: '12px', color: 'var(--text-muted)'}}>Aguardando sincronização de contratos do sistema de origem.</p>
               </div>
             ) : (
               <div className="contracts-table-wrapper">
@@ -4176,6 +4199,8 @@ function App() {
                       <th>Valor</th>
                       <th>Vendedor</th>
                       <th>Dias</th>
+                      <th>Cotas Ocupadas</th>
+                      <th>Comercial</th>
                       <th>Notificado</th>
                       <th>Ações</th>
                     </tr>
@@ -4183,6 +4208,7 @@ function App() {
                   <tbody>
                     {[...contracts].sort((a, b) => a.daysRemaining - b.daysRemaining).map(c => {
                       const urgency = getUrgencyStyle(c.daysRemaining);
+                      const followUp = getFollowUpBadge(c.salesFollowUpStatus);
                       return (
                         <tr key={c.id} className={c.daysRemaining <= 15 ? 'contract-urgent' : ''}>
                           <td>
@@ -4203,6 +4229,29 @@ function App() {
                             </span>
                           </td>
                           <td>
+                            <span className="contract-slots" title="Cotas ocupadas no ciclo atual">
+                              {c.occupiedSlotsCurrentCycle || 0}/{c.totalCycleSlots || 3}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="contract-follow-up">
+                              <span className="contract-follow-up-badge" style={{ background: followUp.bg, color: followUp.color }}>
+                                {followUp.label}
+                              </span>
+                              <div className="contract-follow-up-actions">
+                                <button className="btn-icon" title="Marcar como contatado" onClick={() => updateContractFollowUp(c.id, 'contacted')}>
+                                  <FiPhone size={14} />
+                                </button>
+                                <button className="btn-icon" title="Marcar como renovado" onClick={() => updateContractFollowUp(c.id, 'renewed')}>
+                                  <FiCheckCircle size={14} />
+                                </button>
+                                <button className="btn-icon danger" title="Marcar como não renovado" onClick={() => updateContractFollowUp(c.id, 'not_renewed')}>
+                                  <FiAlertCircle size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
                             {c.notified ? (
                               <span className="contract-notified" title={c.lastNotifiedAt ? `Último: ${new Date(c.lastNotifiedAt).toLocaleString('pt-BR')}` : ''}>
                                 <FiCheckCircle size={14} color="#28A745" /> Sim
@@ -4212,14 +4261,16 @@ function App() {
                             )}
                           </td>
                           <td className="contract-actions-cell">
-                            {(c.Vendor || c.vendorId) && c.daysRemaining <= 15 && (
+                            {currentUser?.role === 'admin' && (c.Vendor || c.vendorId) && c.daysRemaining <= 15 && (
                               <button className="btn-icon" title="Enviar WhatsApp" onClick={() => notifyContract(c.id)}>
                                 <FiSend size={14} />
                               </button>
                             )}
-                            <button className="btn-icon danger" title="Remover" onClick={() => deleteContract(c.id)}>
-                              <FiTrash2 size={14} />
-                            </button>
+                            {currentUser?.role === 'admin' && (
+                              <button className="btn-icon danger" title="Remover" onClick={() => deleteContract(c.id)}>
+                                <FiTrash2 size={14} />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
