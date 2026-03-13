@@ -69,6 +69,7 @@ function App() {
   const [contactPhone, setContactPhone] = useState('');
   const [showContactModal, setShowContactModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(30);
   const [isDraggingHorizontal, setIsDraggingHorizontal] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -440,11 +441,27 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showUserMenu]);
 
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [activePage, showAnalytics]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth > 768) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Keyboard support: Esc closes menus/modals
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
         setShowUserMenu(false);
+        setIsMobileMenuOpen(false);
         setShowChangePasswordModal(false);
         setShowRegisterModal(false);
         setShowContactModal(false);
@@ -2407,8 +2424,10 @@ function App() {
 
   return (
     <div className="app-container">
+      {isMobileMenuOpen && <div className="sidebar-backdrop" onClick={() => setIsMobileMenuOpen(false)} />}
+
       {/* Sidebar */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
           <img src={logo} className="app-logo" alt="Logo" />
           <div className="sidebar-brand-text">
@@ -2518,6 +2537,9 @@ function App() {
       <div className="main-area">
         {/* Top Bar */}
         <div className="topbar">
+          <button className="topbar-btn topbar-menu-btn" onClick={() => setIsMobileMenuOpen((prev) => !prev)} aria-label="Abrir menu">
+            <FiMenu size={18} />
+          </button>
           <div className="topbar-search">
             <FiSearch size={16} />
             <input

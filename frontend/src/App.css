@@ -447,6 +447,10 @@
   border-color: var(--text-muted);
 }
 
+.topbar-menu-btn {
+  display: none;
+}
+
 /* ===== PAGE CONTENT ===== */
 .page-content {
   flex: 1;
@@ -3439,6 +3443,22 @@
   }
 
   .sidebar.open { left: 0; }
+
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(29, 29, 27, 0.45);
+    z-index: 90;
+  }
+
+  .topbar-menu-btn {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .topbar-search {
+    max-width: none;
+  }
 
   .stats-grid { grid-template-columns: 1fr 1fr; }
   
