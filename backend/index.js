@@ -53,7 +53,10 @@ const CONTRACT_TOTAL_CYCLE_SLOTS = Number(process.env.CONTRACT_TOTAL_CYCLE_SLOTS
 let preventiveLearningLastLogKey = null;
 
 function normalizeUserRole(role) {
-  return String(role || '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+  const normalized = String(role || '').trim().toLowerCase();
+  if (normalized === 'admin') return 'admin';
+  if (['comercial', 'commercial', 'sales'].includes(normalized)) return 'comercial';
+  return 'user';
 }
 
 function calculateTicketCost(ticket) {
@@ -823,7 +826,10 @@ app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => 
         }
         return candidate;
       })())
-      : await generateUniqueUsername(normalizedEmail, normalizedRole === 'admin' ? 'admin' : 'user');
+      : await generateUniqueUsername(
+        normalizedEmail,
+        normalizedRole === 'admin' ? 'admin' : normalizedRole === 'comercial' ? 'comercial' : 'user'
+      );
 
     const passwordHash = await bcrypt.hash(password, 10);
     const newUser = await User.create({
@@ -2729,7 +2735,7 @@ app.patch('/admin/users/:id', authenticateToken, requireAdmin, async (req, res) 
       if (updates.active === false) {
         return res.status(400).json({ error: 'Você não pode desativar o seu próprio usuário.' });
       }
-      if (updates.role === 'user') {
+      if (Object.prototype.hasOwnProperty.call(updates, 'role') && updates.role !== 'admin') {
         return res.status(400).json({ error: 'Você não pode remover seu próprio papel de admin.' });
       }
     }
@@ -2888,6 +2894,11 @@ app.get('/contracts', authenticateToken, async (req, res) => {
 
 app.patch('/contracts/:id/follow-up', authenticateToken, async (req, res) => {
   try {
+    const actorRole = normalizeUserRole(req.user?.role);
+    if (!['admin', 'comercial'].includes(actorRole)) {
+      return res.status(403).json({ error: 'Somente Comercial ou Admin pode atualizar follow-up de contratos.' });
+    }
+
     const contract = await Contract.findByPk(req.params.id);
     if (!contract) return res.status(404).json({ error: 'Contrato não encontrado' });
 

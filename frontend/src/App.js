@@ -12,7 +12,12 @@ const REPORT_STORAGE_KEY = 'maintenance_report_rows_v1';
 const EMPTY_TICKET_FORM = { title: '', description: '', category: 'general', priority: 'medium', screenId: '', assignedTo: '', timeSpentMinutes: '', actualCost: '' };
 const EMPTY_SCHEDULE_FORM = { title: '', description: '', scheduledDate: '', scheduledTime: '', assignedTo: '', screenId: '', location: '', color: '#E95D34' };
 
-const normalizeRole = (role) => String(role || '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+const normalizeRole = (role) => {
+  const normalized = String(role || '').trim().toLowerCase();
+  if (normalized === 'admin') return 'admin';
+  if (['comercial', 'commercial', 'sales'].includes(normalized)) return 'comercial';
+  return 'user';
+};
 const normalizeUserPayload = (user) => user ? ({ ...user, role: normalizeRole(user.role) }) : null;
 
 function App() {
@@ -4245,17 +4250,19 @@ function App() {
                               <span className="contract-follow-up-badge" style={{ background: followUp.bg, color: followUp.color }}>
                                 {followUp.label}
                               </span>
-                              <div className="contract-follow-up-actions">
-                                <button className="btn-icon" title="Marcar como contatado" onClick={() => updateContractFollowUp(c.id, 'contacted')}>
-                                  <FiPhone size={14} />
-                                </button>
-                                <button className="btn-icon" title="Marcar como renovado" onClick={() => updateContractFollowUp(c.id, 'renewed')}>
-                                  <FiCheckCircle size={14} />
-                                </button>
-                                <button className="btn-icon danger" title="Marcar como não renovado" onClick={() => updateContractFollowUp(c.id, 'not_renewed')}>
-                                  <FiAlertCircle size={14} />
-                                </button>
-                              </div>
+                              {['admin', 'comercial'].includes(currentUser?.role) && (
+                                <div className="contract-follow-up-actions">
+                                  <button className="btn-icon" title="Marcar como contatado" onClick={() => updateContractFollowUp(c.id, 'contacted')}>
+                                    <FiPhone size={14} />
+                                  </button>
+                                  <button className="btn-icon" title="Marcar como renovado" onClick={() => updateContractFollowUp(c.id, 'renewed')}>
+                                    <FiCheckCircle size={14} />
+                                  </button>
+                                  <button className="btn-icon danger" title="Marcar como não renovado" onClick={() => updateContractFollowUp(c.id, 'not_renewed')}>
+                                    <FiAlertCircle size={14} />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td>
@@ -4515,6 +4522,7 @@ function App() {
                       <td style={{ padding: '8px 6px' }}>
                         <select value={user.role} onChange={(e) => updateAdminUser(user.id, { role: e.target.value })}>
                           <option value="user">Técnico</option>
+                          <option value="comercial">Comercial</option>
                           <option value="admin">Admin</option>
                         </select>
                       </td>
@@ -4757,6 +4765,7 @@ function App() {
               <label style={{ fontSize: 13, color: 'var(--palette-deep)' }}>Perfil</label>
               <select value={registerRole} onChange={(e) => setRegisterRole(e.target.value)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--palette-border)' }}>
                 <option value="tecnico">Técnico</option>
+                <option value="comercial">Comercial</option>
                 <option value="admin">Admin</option>
               </select>
             </div>
