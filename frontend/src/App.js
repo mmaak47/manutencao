@@ -21,6 +21,37 @@ const normalizeRole = (role) => {
 };
 const normalizeUserPayload = (user) => user ? ({ ...user, role: normalizeRole(user.role) }) : null;
 
+const formatNameToken = (value) => {
+  const token = String(value || '').trim();
+  if (!token) return '';
+  return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+};
+
+const getUserDisplayName = (user) => {
+  const firstName = String(user?.firstName || '').trim();
+  const lastName = String(user?.lastName || '').trim();
+  const fullName = `${firstName} ${lastName}`.trim();
+  if (fullName) return fullName;
+
+  const username = String(user?.username || '').trim();
+  if (username) {
+    const parts = username.split(/[._\-\s]+/).filter(Boolean);
+    if (parts.length > 1) {
+      return parts.map(formatNameToken).join(' ');
+    }
+    return username;
+  }
+
+  const emailPrefix = String(user?.email || '').split('@')[0].trim();
+  if (!emailPrefix) return 'Usuário';
+  return emailPrefix.split(/[._\-\s]+/).filter(Boolean).map(formatNameToken).join(' ') || emailPrefix;
+};
+
+const getUserInitial = (user) => {
+  const displayName = getUserDisplayName(user);
+  return displayName.charAt(0).toUpperCase() || 'U';
+};
+
 function App() {
   const [screens, setScreens] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -2086,7 +2117,7 @@ function App() {
               </div>
               <div class="meta">
                 <div><b>Gerado em:</b> ${generatedAt}</div>
-                <div><b>Usuário:</b> ${escapeHtml(currentUser?.username || '-')}</div>
+                <div><b>Usuário:</b> ${escapeHtml(getUserDisplayName(currentUser))}</div>
               </div>
             </div>
 
@@ -2569,10 +2600,10 @@ function App() {
           <div className="user-actions" ref={userMenuRef}>
             <div className="sidebar-user" onClick={() => setShowUserMenu((prev) => !prev)}>
               <div className="sidebar-avatar">
-                {currentUser?.username?.charAt(0).toUpperCase() || 'U'}
+                {getUserInitial(currentUser)}
               </div>
               <div className="sidebar-user-info">
-                <div className="sidebar-user-name">{currentUser?.username || 'Usuário'}</div>
+                <div className="sidebar-user-name">{getUserDisplayName(currentUser)}</div>
                 <div className="sidebar-user-role">{currentUser?.role || ''}</div>
               </div>
               <FiChevronDown size={14} style={{ color: 'rgba(255,255,255,0.4)' }} />
@@ -4633,7 +4664,7 @@ function App() {
               <label>Usuário</label>
               <input
                 type="text"
-                value={currentUser?.username || 'Usuário autenticado'}
+                value={getUserDisplayName(currentUser)}
                 className="note-author"
                 readOnly
               />

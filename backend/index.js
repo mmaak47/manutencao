@@ -361,6 +361,31 @@ function sanitizeUsernameCandidate(value) {
   return (value || '').toLowerCase().replace(/[^a-z0-9._-]/g, '');
 }
 
+function normalizePersonName(value) {
+  const cleaned = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!cleaned) return null;
+  return cleaned
+    .split(' ')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function deriveNamesFromIdentifier(identifier) {
+  const base = String(identifier || '').split('@')[0];
+  const parts = base
+    .replace(/[^a-zA-Z0-9._-]/g, ' ')
+    .split(/[._\-\s]+/)
+    .map((part) => normalizePersonName(part))
+    .filter(Boolean);
+
+  if (!parts.length) return { firstName: null, lastName: null };
+  if (parts.length === 1) return { firstName: parts[0], lastName: null };
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  };
+}
+
 async function generateUniqueEmailFromBase(baseName, domain = 'intermidia.local') {
   const base = sanitizeUsernameCandidate(baseName) || 'user';
   let candidate = `${base}@${domain}`;
@@ -531,6 +556,20 @@ async function ensureUserColumns() {
       });
     }
 
+    if (!tableDefinition.firstName) {
+      await queryInterface.addColumn('users', 'firstName', {
+        type: DataTypes.STRING,
+        allowNull: true
+      });
+    }
+
+    if (!tableDefinition.lastName) {
+      await queryInterface.addColumn('users', 'lastName', {
+        type: DataTypes.STRING,
+        allowNull: true
+      });
+    }
+
     const usersWithoutEmail = await User.findAll({ where: { email: null } });
     for (const user of usersWithoutEmail) {
       if (user.username && user.username.includes('@')) {
@@ -559,9 +598,33 @@ async function ensureUserColumns() {
     // Normalize legacy role values (e.g. ADMIN/Admin) to prevent access issues.
     const allUsers = await User.findAll();
     for (const user of allUsers) {
+      const updates = {};
+
       const normalizedRole = normalizeUserRole(user.role);
       if (user.role !== normalizedRole) {
-        await user.update({ role: normalizedRole });
+        updates.role = normalizedRole;
+      }
+
+      if (!user.firstName && !user.lastName) {
+        const regByEmail = user.email
+          ? await TechRegistration.findOne({ where: { status: 'approved', email: normalizeEmail(user.email) } })
+          : null;
+
+        if (regByEmail?.firstName) {
+          updates.firstName = normalizePersonName(regByEmail.firstName);
+          updates.lastName = normalizePersonName(regByEmail.lastName);
+        } else {
+          const derived = deriveNamesFromIdentifier(user.username || user.email);
+          updates.firstName = derived.firstName;
+          updates.lastName = derived.lastName;
+        }
+      } else {
+        if (user.firstName) updates.firstName = normalizePersonName(user.firstName);
+        if (user.lastName) updates.lastName = normalizePersonName(user.lastName);
+      }
+
+      if (Object.keys(updates).length) {
+        await user.update(updates);
       }
     }
   } catch (err) {
@@ -960,7 +1023,9 @@ const registerSchema = z.object({
   username: z.string().trim().min(3).max(40).optional(),
   email: z.string().trim().email(),
   password: z.string().min(12),
-  role: z.enum(['admin', 'user', 'comercial']).optional()
+  role: z.enum(['admin', 'user', 'comercial']).optional(),
+  firstName: z.string().trim().min(1).max(80).optional(),
+  lastName: z.string().trim().min(1).max(120).optional()
 });
 
 const changePasswordSchema = z.object({
@@ -1013,6 +1078,8 @@ app.post('/auth/login', loginLimiter, authLimiter, async (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
         role: normalizeUserRole(user.role)
       }
     });
@@ -1024,7 +1091,7 @@ app.post('/auth/login', loginLimiter, authLimiter, async (req, res) => {
 app.get('/auth/me', authenticateToken, async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
-      attributes: ['id', 'username', 'email', 'role']
+      attributes: ['id', 'username', 'email', 'firstName', 'lastName', 'role']
     });
 
     if (!user) {
@@ -1035,6 +1102,8 @@ app.get('/auth/me', authenticateToken, async (req, res) => {
       id: user.id,
       username: user.username,
       email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
       role: normalizeUserRole(user.role)
     });
   } catch (err) {
@@ -1049,7 +1118,7 @@ app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => 
       return res.status(400).json({ error: 'Dados inválidos para cadastro de usuário.' });
     }
 
-    const { username, email, password, role } = parsed.data;
+    const { username, email, password, role, firstName, lastName } = parsed.data;
     const normalizedEmail = normalizeEmail(email);
 
     if (!normalizedEmail || !password) {
@@ -1086,9 +1155,12 @@ app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => 
     }
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const derivedNames = deriveNamesFromIdentifier(resolvedUsername || normalizedEmail);
     const newUser = await User.create({
       username: resolvedUsername,
       email: normalizedEmail,
+      firstName: normalizePersonName(firstName) || derivedNames.firstName,
+      lastName: normalizePersonName(lastName) || derivedNames.lastName,
       passwordHash,
       role: normalizedRole,
       active: true
@@ -1098,6 +1170,8 @@ app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => 
       id: newUser.id,
       username: newUser.username,
       email: newUser.email,
+      firstName: newUser.firstName,
+      lastName: newUser.lastName,
       role: newUser.role
     });
   } catch (err) {
@@ -1284,7 +1358,15 @@ app.post('/admin/registrations/:id/approve', authenticateToken, requireAdmin, as
     }
 
     const username = await generateUniqueUsername(email, reg.firstName);
-    const newUser = await User.create({ username, email, passwordHash: reg.passwordHash, role: 'user', active: true });
+    const newUser = await User.create({
+      username,
+      email,
+      firstName: normalizePersonName(reg.firstName),
+      lastName: normalizePersonName(reg.lastName),
+      passwordHash: reg.passwordHash,
+      role: 'user',
+      active: true
+    });
     await reg.update({ status: 'approved', reviewedBy: req.user.username, reviewedAt: new Date() });
     await logAudit(req, 'approve', 'tech_registration', reg.id, { username, email, name: `${reg.firstName} ${reg.lastName}` });
     res.json({ success: true, username, email, userId: newUser.id });
@@ -3018,7 +3100,7 @@ app.get('/users', authenticateToken, async (req, res) => {
   try {
     const users = await User.findAll({
       where: { active: true },
-      attributes: ['id', 'username', 'email', 'role', 'active'],
+      attributes: ['id', 'username', 'email', 'firstName', 'lastName', 'role', 'active'],
       order: [['email', 'ASC']]
     });
     res.json(users);
@@ -3029,7 +3111,7 @@ app.get('/users', authenticateToken, async (req, res) => {
 app.get('/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const users = await User.findAll({
-      attributes: ['id', 'username', 'email', 'role', 'active', 'createdAt', 'updatedAt'],
+      attributes: ['id', 'username', 'email', 'firstName', 'lastName', 'role', 'active', 'createdAt', 'updatedAt'],
       order: [['createdAt', 'ASC']]
     });
     res.json(users);
