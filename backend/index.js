@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
+const csurf = require('csurf');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -73,6 +74,21 @@ const refreshTokenCookieOptions = {
   maxAge: 7 * 24 * 60 * 60 * 1000
 };
 
+const csrfSecretCookieOptions = {
+  key: '_csrf',
+  httpOnly: true,
+  secure: COOKIE_SECURE,
+  sameSite: 'strict',
+  path: '/'
+};
+
+const csrfSecretClearCookieOptions = {
+  httpOnly: true,
+  secure: COOKIE_SECURE,
+  sameSite: 'strict',
+  path: '/'
+};
+
 const csrfCookieOptions = {
   httpOnly: false,
   secure: COOKIE_SECURE,
@@ -117,11 +133,7 @@ app.use(cors({
 app.use(cookieParser());
 app.use(bodyParser.json({ limit: BODY_LIMIT }));
 
-function issueCsrfToken(res) {
-  const csrfToken = crypto.randomBytes(24).toString('hex');
-  res.cookie('csrf_token', csrfToken, csrfCookieOptions);
-  return csrfToken;
-}
+const csrfProtection = csurf({ cookie: csrfSecretCookieOptions });
 
 function shouldSkipCsrf(pathname) {
   return [
@@ -133,21 +145,19 @@ function shouldSkipCsrf(pathname) {
 }
 
 app.use((req, res, next) => {
-  const method = String(req.method || 'GET').toUpperCase();
-  if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return next();
   if (shouldSkipCsrf(req.path)) return next();
-
   const hasCookieSession = Boolean(req.cookies?.access_token);
   if (!hasCookieSession) return next();
 
-  const csrfCookie = req.cookies?.csrf_token;
-  const csrfHeader = req.headers['x-csrf-token'];
-  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
-    return res.status(403).json({ error: 'CSRF token inválido ou ausente' });
-  }
-
-  return next();
+  return csrfProtection(req, res, next);
 });
+
+function publishCsrfToken(req, res) {
+  const csrfToken = req.csrfToken();
+  res.cookie('csrf_token', csrfToken, csrfCookieOptions);
+  res.setHeader('X-CSRF-Token', csrfToken);
+  return csrfToken;
+}
 
 const authLimiter = rateLimit({
   windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
@@ -338,14 +348,13 @@ async function establishSession(res, user) {
   await user.update({ refreshTokenHash: hashTokenValue(refreshToken) });
   res.cookie('access_token', accessToken, accessTokenCookieOptions);
   res.cookie('refresh_token', refreshToken, refreshTokenCookieOptions);
-  const csrfToken = issueCsrfToken(res);
-  res.setHeader('X-CSRF-Token', csrfToken);
   return accessToken;
 }
 
 function clearSessionCookies(res) {
   res.clearCookie('access_token', { ...accessTokenCookieOptions, maxAge: undefined });
   res.clearCookie('refresh_token', { ...refreshTokenCookieOptions, maxAge: undefined });
+  res.clearCookie('_csrf', { ...csrfSecretClearCookieOptions, maxAge: undefined });
   res.clearCookie('csrf_token', { ...csrfCookieOptions, maxAge: undefined });
 }
 
@@ -1278,8 +1287,8 @@ app.post('/auth/logout', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/auth/csrf', (req, res) => {
-  const csrfToken = issueCsrfToken(res);
+app.get('/auth/csrf', csrfProtection, (req, res) => {
+  const csrfToken = publishCsrfToken(req, res);
   return res.json({ csrfToken });
 });
 
@@ -4602,3 +4611,10 @@ async function autoSyncAndNotify() {
 }
 setInterval(autoSyncAndNotify, 6 * 60 * 60 * 1000);
 setTimeout(autoSyncAndNotify, 15000);
+
+app.use((err, req, res, next) => {
+  if (err && err.code === 'EBADCSRFTOKEN') {
+    return res.status(403).json({ error: 'CSRF token inválido ou ausente' });
+  }
+  return next(err);
+});
