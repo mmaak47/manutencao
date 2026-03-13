@@ -3842,48 +3842,74 @@ app.post('/sync/locations', authenticateToken, async (req, res) => {
 // ===== CONTRACT SCRAPING FROM ORIGIN SYSTEM =====
 async function scrapeContracts() {
   try {
+    const monthOffsets = [0, 1, 2, -1];
     const now = new Date();
-    const mes = now.getMonth() + 1;
-    const ano = now.getFullYear();
-    const url = `${ORIGIN_BASE}/premium/ajax-dashboard-data?mes=${mes}&ano=${ano}`;
+    const unique = new Map();
 
-    let resp;
-    try {
-      resp = await axios.get(url, {
-        headers: { Cookie: originCookies },
-        timeout: 30000,
-        httpsAgent: originHttpsAgent,
-        validateStatus: () => true
-      });
-    } catch (err) {
-      console.warn('Contract fetch failed:', err.message);
-      return [];
+    const parseDateToIso = (value) => {
+      if (!value) return '';
+      const text = String(value).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+      const br = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+      const parsed = new Date(text);
+      if (Number.isNaN(parsed.getTime())) return '';
+      return parsed.toISOString().slice(0, 10);
+    };
+
+    const parseListFromPayload = (payload) => {
+      if (!payload || typeof payload !== 'object') return [];
+      const rawList = payload?.contratos_vencer?.lista || payload?.contratos_vencer || payload?.lista || payload?.data?.lista || [];
+      if (!Array.isArray(rawList)) return [];
+      return rawList.map((item) => ({
+        advertiser: item.cliente || item.anunciante || '',
+        expirationDate: parseDateToIso(item.data_final || item.vencimento || item.expirationDate),
+        value: parseFloat(item.valor_parcela || item.valor || item.value) || 0,
+        vendorName: item.vendedor || item.vendorName || 'N/A',
+        daysRemaining: parseInt(item.dias, 10) || 0
+      })).filter((c) => c.advertiser && c.expirationDate);
+    };
+
+    for (const offset of monthOffsets) {
+      const refDate = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      const mes = refDate.getMonth() + 1;
+      const ano = refDate.getFullYear();
+      const url = `${ORIGIN_BASE}/premium/ajax-dashboard-data?mes=${mes}&ano=${ano}`;
+
+      let resp;
+      try {
+        resp = await axios.get(url, {
+          headers: { Cookie: originCookies },
+          timeout: 30000,
+          httpsAgent: originHttpsAgent,
+          validateStatus: () => true
+        });
+      } catch (err) {
+        console.warn(`Contract fetch failed (${mes}/${ano}):`, err.message);
+        continue;
+      }
+
+      // If not JSON or not successful, re-login and retry once
+      if (!resp.data || typeof resp.data !== 'object' || resp.data.success === false) {
+        await originLogin();
+        resp = await axios.get(url, {
+          headers: { Cookie: originCookies },
+          timeout: 30000,
+          httpsAgent: originHttpsAgent,
+          validateStatus: () => true
+        });
+      }
+
+      const parsed = parseListFromPayload(resp.data);
+      for (const contract of parsed) {
+        unique.set(`${contract.advertiser}|${contract.expirationDate}`, contract);
+      }
     }
 
-    // If not JSON or not successful, re-login and retry
-    if (!resp.data || typeof resp.data !== 'object' || !resp.data.success) {
-      await originLogin();
-      resp = await axios.get(url, {
-        headers: { Cookie: originCookies },
-        timeout: 30000,
-        httpsAgent: originHttpsAgent,
-        validateStatus: () => true
-      });
+    const contracts = Array.from(unique.values());
+    if (!contracts.length) {
+      console.warn('No contract data returned from origin after month fallback scan');
     }
-
-    if (!resp.data || !resp.data.contratos_vencer || !resp.data.contratos_vencer.lista) {
-      console.warn('No contratos_vencer data in response');
-      return [];
-    }
-
-    const lista = resp.data.contratos_vencer.lista;
-    const contracts = lista.map(item => ({
-      advertiser: item.cliente || '',
-      expirationDate: item.data_final || '',
-      value: parseFloat(item.valor_parcela) || 0,
-      vendorName: item.vendedor || 'N/A',
-      daysRemaining: parseInt(item.dias) || 0
-    })).filter(c => c.advertiser && c.expirationDate);
 
     console.log(`Contracts scraped: ${contracts.length} found`);
     return contracts;
@@ -3897,8 +3923,15 @@ async function scrapeContracts() {
 app.post('/contracts/sync', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const synced = await syncContractsFromOrigin();
-    if (!synced) return res.status(400).json({ error: 'Nenhum contrato encontrado no sistema de origem' });
     const contracts = await Contract.findAll();
+    if (!synced) {
+      return res.json({
+        success: true,
+        synced: 0,
+        total: contracts.length,
+        warning: 'Nenhum contrato retornado pelo sistema de origem agora. Mantivemos os contratos já salvos localmente.'
+      });
+    }
     res.json({ success: true, synced, total: contracts.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

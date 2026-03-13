@@ -1705,7 +1705,11 @@ function App() {
     setContractsSyncing(true);
     try {
       const res = await axios.post(`${API_BASE}/contracts/sync`, {}, authConfig);
-      showAlert(`Contratos sincronizados! ${res.data.synced || 0} contratos encontrados.`, 'success');
+      if (res.data.warning) {
+        showAlert(res.data.warning, 'warning');
+      } else {
+        showAlert(`Contratos sincronizados! ${res.data.synced || 0} contratos encontrados.`, 'success');
+      }
       fetchContracts();
     } catch (err) {
       showAlert('Erro ao sincronizar contratos: ' + (err.response?.data?.error || err.message), 'error');
