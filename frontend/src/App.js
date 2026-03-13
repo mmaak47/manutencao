@@ -49,15 +49,9 @@ function App() {
   const [eventFilterStatus, setEventFilterStatus] = useState('all');
   const [eventFrom, setEventFrom] = useState('');
   const [eventTo, setEventTo] = useState('');
-  const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || '');
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const raw = localStorage.getItem('authUser');
-      return raw ? normalizeUserPayload(JSON.parse(raw)) : null;
-    } catch (err) {
-      return null;
-    }
-  });
+  const [authToken, setAuthToken] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -284,9 +278,7 @@ function App() {
     }
   };
 
-  const authConfig = authToken
-    ? { headers: { Authorization: `Bearer ${authToken}` } }
-    : {};
+  const authConfig = { withCredentials: true };
 
   const showAlert = (message, type = 'info') => {
     setAppAlert({ open: true, message, type });
@@ -387,11 +379,7 @@ function App() {
   }, [reportRows]);
 
   useEffect(() => {
-    if (!authToken) {
-      setCurrentUser(null);
-      setContacts([]);
-      return;
-    }
+    if (!authToken) return;
     fetchCurrentUser();
     fetchScreens();
     fetchContacts();
@@ -405,6 +393,15 @@ function App() {
     }, 5000);
     return () => clearInterval(refreshInterval);
   }, [authToken]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      await fetchCurrentUser();
+      if (mounted) setSessionChecked(true);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // Dark mode toggle
   useEffect(() => {
@@ -851,12 +848,14 @@ function App() {
 
   const fetchCurrentUser = async () => {
     try {
+      await axios.get(`${API_BASE}/auth/csrf`, authConfig);
       const res = await axios.get(`${API_BASE}/auth/me`, authConfig);
       const userPayload = normalizeUserPayload(res.data);
       setCurrentUser(userPayload);
-      localStorage.setItem('authUser', JSON.stringify(userPayload));
+      setAuthToken('cookie-session');
     } catch (err) {
-      handleLogout();
+      setAuthToken('');
+      setCurrentUser(null);
     }
   };
 
@@ -875,7 +874,7 @@ function App() {
   };
 
   const checkPasswordStrength = (pwd) => ({
-    length: pwd.length >= 8,
+    length: pwd.length >= 12,
     upper: /[A-Z]/.test(pwd),
     lower: /[a-z]/.test(pwd),
     number: /[0-9]/.test(pwd),
@@ -946,7 +945,7 @@ function App() {
     if (!validateCPFFrontend(cpf)) return setRegError('CPF inválido. Verifique os dígitos verificadores.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setRegError('E-mail inválido.');
     const strength = checkPasswordStrength(password);
-    if (!Object.values(strength).every(Boolean)) return setRegError('Senha fraca. Use no mínimo 8 caracteres com maiúscula, minúscula, número e símbolo.');
+    if (!Object.values(strength).every(Boolean)) return setRegError('Senha fraca. Use no mínimo 12 caracteres com maiúscula, minúscula, número e símbolo.');
     if (password !== confirmPassword) return setRegError('Confirmação de senha não confere.');
     setRegLoading(true);
     try {
@@ -1040,12 +1039,10 @@ function App() {
       const res = await axios.post(`${API_BASE}/auth/login`, {
         email: loginEmail,
         password: loginPassword
-      });
+      }, { withCredentials: true });
       const userPayload = normalizeUserPayload(res.data.user);
-      setAuthToken(res.data.token);
+      setAuthToken('cookie-session');
       setCurrentUser(userPayload);
-      localStorage.setItem('authToken', res.data.token);
-      localStorage.setItem('authUser', JSON.stringify(userPayload));
       setLoginPassword('');
     } catch (err) {
       const message = err.response?.data?.error || 'Falha no login';
@@ -1055,9 +1052,12 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('authUser');
+  const handleLogout = async () => {
+    try {
+      await axios.post(`${API_BASE}/auth/logout`, {}, { withCredentials: true });
+    } catch (err) {
+      // ignore local cleanup still applies
+    }
     setAuthToken('');
     setCurrentUser(null);
     setScreens([]);
@@ -1073,8 +1073,8 @@ function App() {
       return;
     }
 
-    if (newPasswordInput.length < 6) {
-      showAlert('A nova senha deve ter pelo menos 6 caracteres.', 'warning');
+    if (newPasswordInput.length < 12) {
+      showAlert('A nova senha deve ter pelo menos 12 caracteres.', 'warning');
       return;
     }
 
@@ -2277,6 +2277,22 @@ function App() {
     }
   };
 
+  if (!sessionChecked) {
+    return (
+      <div className="login-page">
+        <div className="login-container">
+          <div className="login-box">
+            <div className="login-header">
+              <img src={logo} className="login-logo" alt="Logo Intermídia" />
+              <h1>Carregando sessão...</h1>
+              <p>Validando credenciais de acesso</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!authToken) {
     // ── SELF-REGISTER VIEW ──
     if (showSelfRegister) {
@@ -2330,11 +2346,11 @@ function App() {
                     </div>
                     <div className="form-group">
                       <label>Senha *</label>
-                      <input type="password" placeholder="Mínimo 8 caracteres" value={regForm.password}
+                      <input type="password" placeholder="Mínimo 12 caracteres" value={regForm.password}
                         onChange={e => setRegForm(f => ({ ...f, password: e.target.value }))} />
                       {regForm.password && (
                         <div className="password-strength">
-                          {[['length','≥ 8 caracteres'],['upper','Maiúscula'],['lower','Minúscula'],['number','Número'],['special','Símbolo']].map(([k,label]) => (
+                          {[['length','≥ 12 caracteres'],['upper','Maiúscula'],['lower','Minúscula'],['number','Número'],['special','Símbolo']].map(([k,label]) => (
                             <span key={k} className={`strength-item ${strength[k] ? 'ok' : 'fail'}`}>
                               {strength[k] ? '✓' : '✗'} {label}
                             </span>
@@ -2524,9 +2540,11 @@ function App() {
               )}
             </button>
           )}
-          <button className={`sidebar-item ${activePage === 'notifications' ? 'active' : ''}`} onClick={() => setActivePage('notifications')}>
-            <FiBell size={18} /> Notificações
-          </button>
+          {currentUser?.role === 'admin' && (
+            <button className={`sidebar-item ${activePage === 'notifications' ? 'active' : ''}`} onClick={() => setActivePage('notifications')}>
+              <FiBell size={16} /> Notificações
+            </button>
+          )}
           <button className="sidebar-item" onClick={() => setDarkMode(!darkMode)}>
             {darkMode ? <FiSun size={18} /> : <FiMoon size={18} />}
             {darkMode ? 'Modo Claro' : 'Modo Escuro'}
@@ -2582,7 +2600,7 @@ function App() {
             />
           </div>
           <div className="topbar-right">
-            <NotificationCenter authToken={`Bearer ${authToken}`} />
+            <NotificationCenter />
           </div>
         </div>
 
@@ -5201,10 +5219,7 @@ function App() {
       )}
 
       {showAnalytics && (
-        <Analytics 
-          authToken={`Bearer ${authToken}`} 
-          onClose={() => setShowAnalytics(false)} 
-        />
+        <Analytics onClose={() => setShowAnalytics(false)} />
       )}
     </div>
   );

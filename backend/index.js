@@ -1,9 +1,14 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const { z } = require('zod');
 const { Op, DataTypes } = require('sequelize');
 const sequelize = require('./config/database');
 const Screen = require('./models/Screen');
@@ -37,8 +42,127 @@ Contract.belongsTo(Vendor, { foreignKey: 'vendorId' });
 Vendor.hasMany(Contract, { foreignKey: 'vendorId' });
 
 const app = express();
-app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
+
+const ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+if (!ALLOWED_ORIGINS.length) {
+  throw new Error('Missing required environment variable: CORS_ALLOWED_ORIGINS');
+}
+
+const isProduction = process.env.NODE_ENV === 'production';
+const COOKIE_SECURE = process.env.COOKIE_SECURE
+  ? process.env.COOKIE_SECURE === 'true'
+  : isProduction;
+const ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_TTL || '15m';
+const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_TTL || '7d';
+const BCRYPT_ROUNDS = Math.max(12, Number(process.env.BCRYPT_ROUNDS || 12));
+const BODY_LIMIT = process.env.BODY_LIMIT || '1mb';
+const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || (15 * 60 * 1000));
+const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX || 10);
+const LOGIN_RATE_LIMIT_MAX = Number(process.env.LOGIN_RATE_LIMIT_MAX || 5);
+
+const refreshTokenCookieOptions = {
+  httpOnly: true,
+  secure: COOKIE_SECURE,
+  sameSite: 'strict',
+  path: '/auth',
+  maxAge: 7 * 24 * 60 * 60 * 1000
+};
+
+const csrfCookieOptions = {
+  httpOnly: false,
+  secure: COOKIE_SECURE,
+  sameSite: 'strict',
+  path: '/'
+};
+
+const accessTokenCookieOptions = {
+  httpOnly: true,
+  secure: COOKIE_SECURE,
+  sameSite: 'strict',
+  path: '/',
+  maxAge: 15 * 60 * 1000
+};
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      connectSrc: ["'self'", ...ALLOWED_ORIGINS]
+    }
+  },
+  referrerPolicy: { policy: 'no-referrer' },
+  frameguard: { action: 'sameorigin' },
+  xssFilter: false
+}));
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    return callback(new Error('CORS origin denied'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token']
+}));
+
+app.use(cookieParser());
+app.use(bodyParser.json({ limit: BODY_LIMIT }));
+
+function issueCsrfToken(res) {
+  const csrfToken = crypto.randomBytes(24).toString('hex');
+  res.cookie('csrf_token', csrfToken, csrfCookieOptions);
+  return csrfToken;
+}
+
+function shouldSkipCsrf(pathname) {
+  return [
+    '/auth/login',
+    '/auth/self-register',
+    '/auth/refresh',
+    '/auth/csrf'
+  ].includes(String(pathname || ''));
+}
+
+app.use((req, res, next) => {
+  const method = String(req.method || 'GET').toUpperCase();
+  if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return next();
+  if (shouldSkipCsrf(req.path)) return next();
+
+  const hasCookieSession = Boolean(req.cookies?.access_token);
+  if (!hasCookieSession) return next();
+
+  const csrfCookie = req.cookies?.csrf_token;
+  const csrfHeader = req.headers['x-csrf-token'];
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    return res.status(403).json({ error: 'CSRF token inválido ou ausente' });
+  }
+
+  return next();
+});
+
+const authLimiter = rateLimit({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  max: AUTH_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas. Tente novamente mais tarde.' }
+});
+
+const loginLimiter = rateLimit({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  max: LOGIN_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas de login. Aguarde e tente novamente.' }
+});
 
 const OFFLINE_TODO_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_TECHNICIAN_HOURLY_RATE = Number(process.env.DEFAULT_TECHNICIAN_HOURLY_RATE || 90);
@@ -92,6 +216,22 @@ function formatHoursDuration(hours) {
 
 function normalizeScheduleDate(date) {
   return new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+}
+
+function getPositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed)) return fallback;
+  if (parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
+function parseNumericIdParam(req, res, name = 'id') {
+  const value = Number.parseInt(String(req.params?.[name] ?? ''), 10);
+  if (!Number.isInteger(value) || value <= 0) {
+    res.status(400).json({ error: `Parâmetro ${name} inválido` });
+    return null;
+  }
+  return value;
 }
 
 function getPreventiveLearningStatus(now = new Date()) {
@@ -162,11 +302,50 @@ function validateCPF(cpf) {
 }
 
 function validatePasswordStrength(password) {
-  return password.length >= 8
+  return password.length >= 12
     && /[A-Z]/.test(password)
     && /[a-z]/.test(password)
     && /[0-9]/.test(password)
     && /[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\\/]/.test(password);
+}
+
+function hashTokenValue(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function createAccessToken(user) {
+  const tokenVersion = Number(user?.tokenVersion || 0);
+  return jwt.sign(
+    { id: user.id, username: user.username, email: user.email, role: normalizeUserRole(user.role), tokenVersion, type: 'access' },
+    JWT_SECRET,
+    { expiresIn: ACCESS_TOKEN_TTL }
+  );
+}
+
+function createRefreshToken(user) {
+  const tokenVersion = Number(user?.tokenVersion || 0);
+  return jwt.sign(
+    { id: user.id, tokenVersion, type: 'refresh' },
+    JWT_SECRET,
+    { expiresIn: REFRESH_TOKEN_TTL }
+  );
+}
+
+async function establishSession(res, user) {
+  const accessToken = createAccessToken(user);
+  const refreshToken = createRefreshToken(user);
+  await user.update({ refreshTokenHash: hashTokenValue(refreshToken) });
+  res.cookie('access_token', accessToken, accessTokenCookieOptions);
+  res.cookie('refresh_token', refreshToken, refreshTokenCookieOptions);
+  const csrfToken = issueCsrfToken(res);
+  res.setHeader('X-CSRF-Token', csrfToken);
+  return accessToken;
+}
+
+function clearSessionCookies(res) {
+  res.clearCookie('access_token', { ...accessTokenCookieOptions, maxAge: undefined });
+  res.clearCookie('refresh_token', { ...refreshTokenCookieOptions, maxAge: undefined });
+  res.clearCookie('csrf_token', { ...csrfCookieOptions, maxAge: undefined });
 }
 
 function isValidEmail(email) {
@@ -209,6 +388,9 @@ async function generateUniqueUsername(email, fallback = 'user') {
 
 // Initialize database
 sequelize.sync().then(async () => {
+  await sequelize.query('PRAGMA journal_mode = WAL;');
+  await sequelize.query('PRAGMA busy_timeout = 5000;');
+  await sequelize.query('PRAGMA foreign_keys = ON;');
   await ensureScreenColumns();
   await ensureUserColumns();
   await ensureTicketColumns();
@@ -331,6 +513,21 @@ async function ensureUserColumns() {
       try {
         await sequelize.query('CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email) WHERE email IS NOT NULL');
       } catch (e) { /* index may already exist */ }
+    }
+
+    if (!tableDefinition.tokenVersion) {
+      await queryInterface.addColumn('users', 'tokenVersion', {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0
+      });
+    }
+
+    if (!tableDefinition.refreshTokenHash) {
+      await queryInterface.addColumn('users', 'refreshTokenHash', {
+        type: DataTypes.STRING,
+        allowNull: true
+      });
     }
 
     const usersWithoutEmail = await User.findAll({ where: { email: null } });
@@ -712,10 +909,19 @@ async function bootstrapAdmin() {
     const adminCount = await User.count({ where: { role: 'admin' } });
     if (adminCount > 0) return;
 
-    const username = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
-    const email = normalizeEmail(process.env.DEFAULT_ADMIN_EMAIL || 'admin@intermidia.local');
-    const password = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
-    const passwordHash = await bcrypt.hash(password, 10);
+    const username = process.env.DEFAULT_ADMIN_USERNAME;
+    const email = normalizeEmail(process.env.DEFAULT_ADMIN_EMAIL || '');
+    const password = process.env.DEFAULT_ADMIN_PASSWORD;
+
+    if (!username || !email || !password) {
+      throw new Error('Missing DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL or DEFAULT_ADMIN_PASSWORD for initial admin bootstrap');
+    }
+
+    if (!validatePasswordStrength(password)) {
+      throw new Error('DEFAULT_ADMIN_PASSWORD does not meet password policy requirements');
+    }
+
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     await User.create({ username, email, passwordHash, role: 'admin' });
     console.log(`Default admin created: ${email}`);
@@ -724,17 +930,34 @@ async function bootstrapAdmin() {
   }
 }
 
-function createToken(user) {
-  return jwt.sign(
-    { id: user.id, username: user.username, email: user.email, role: normalizeUserRole(user.role) },
-    JWT_SECRET,
-    { expiresIn: '12h' }
-  );
-}
+const loginSchema = z.object({
+  email: z.string().trim().email().optional(),
+  username: z.string().trim().min(1).optional(),
+  password: z.string().min(1)
+}).refine((value) => Boolean(value.email || value.username), {
+  message: 'E-mail ou usuário é obrigatório'
+});
 
-app.post('/auth/login', async (req, res) => {
+const registerSchema = z.object({
+  username: z.string().trim().min(3).max(40).optional(),
+  email: z.string().trim().email(),
+  password: z.string().min(12),
+  role: z.enum(['admin', 'user', 'comercial']).optional()
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(12)
+});
+
+app.post('/auth/login', loginLimiter, authLimiter, async (req, res) => {
   try {
-    const { email, username, password } = req.body;
+    const parsed = loginSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Payload de login inválido' });
+    }
+
+    const { email, username, password } = parsed.data;
     const identifier = normalizeEmail(email || username);
     if (!identifier || !password) {
       return res.status(400).json({ error: 'Preencha e-mail e senha' });
@@ -749,19 +972,23 @@ app.post('/auth/login', async (req, res) => {
       }
     });
     if (!user) {
+      await logAudit({ ip: req.ip, user: { username: identifier } }, 'login-failed', 'auth', null, { reason: 'user-not-found', identifier });
       return res.status(401).json({ error: 'E-mail ou senha incorreto' });
     }
 
     if (user.active === false) {
+      await logAudit({ ip: req.ip, user: { id: user.id, username: user.username } }, 'login-failed', 'auth', user.id, { reason: 'user-inactive' });
       return res.status(403).json({ error: 'Usuário desativado. Fale com um administrador.' });
     }
 
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
+      await logAudit({ ip: req.ip, user: { id: user.id, username: user.username } }, 'login-failed', 'auth', user.id, { reason: 'invalid-password' });
       return res.status(401).json({ error: 'E-mail ou senha incorreto' });
     }
 
-    const token = createToken(user);
+    const token = await establishSession(res, user);
+    await logAudit({ ip: req.ip, user: { id: user.id, username: user.username } }, 'login-success', 'auth', user.id, { role: normalizeUserRole(user.role) });
     res.json({
       token,
       user: {
@@ -799,7 +1026,12 @@ app.get('/auth/me', authenticateToken, async (req, res) => {
 
 app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { username, email, password, role } = req.body;
+    const parsed = registerSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Dados inválidos para cadastro de usuário.' });
+    }
+
+    const { username, email, password, role } = parsed.data;
     const normalizedEmail = normalizeEmail(email);
 
     if (!normalizedEmail || !password) {
@@ -831,7 +1063,11 @@ app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => 
         normalizedRole === 'admin' ? 'admin' : normalizedRole === 'comercial' ? 'comercial' : 'user'
       );
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    if (!validatePasswordStrength(password)) {
+      return res.status(400).json({ error: 'Senha fraca. Use no mínimo 12 caracteres com maiúscula, minúscula, número e símbolo.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const newUser = await User.create({
       username: resolvedUsername,
       email: normalizedEmail,
@@ -853,14 +1089,19 @@ app.post('/auth/register', authenticateToken, requireAdmin, async (req, res) => 
 
 app.post('/auth/change-password', authenticateToken, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const parsed = changePasswordSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Dados inválidos para troca de senha.' });
+    }
+
+    const { currentPassword, newPassword } = parsed.data;
 
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: 'Current and new password are required' });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'New password must have at least 6 characters' });
+    if (!validatePasswordStrength(newPassword)) {
+      return res.status(400).json({ error: 'A nova senha deve ter no mínimo 12 caracteres e incluir maiúscula, minúscula, número e símbolo.' });
     }
 
     const user = await User.findByPk(req.user.id);
@@ -873,8 +1114,9 @@ app.post('/auth/change-password', authenticateToken, async (req, res) => {
       return res.status(401).json({ error: 'Current password is invalid' });
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await user.update({ passwordHash });
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    await user.update({ passwordHash, tokenVersion: Number(user.tokenVersion || 0) + 1, refreshTokenHash: null });
+    clearSessionCookies(res);
 
     res.json({ success: true });
   } catch (err) {
@@ -882,8 +1124,58 @@ app.post('/auth/change-password', authenticateToken, async (req, res) => {
   }
 });
 
+app.post('/auth/refresh', authLimiter, async (req, res) => {
+  try {
+    const refreshToken = req.cookies?.refresh_token;
+    if (!refreshToken) return res.status(401).json({ error: 'Refresh token ausente' });
+
+    const payload = jwt.verify(refreshToken, JWT_SECRET);
+    if (payload?.type !== 'refresh') return res.status(401).json({ error: 'Refresh token inválido' });
+
+    const user = await User.findByPk(payload.id);
+    if (!user || user.active === false) return res.status(401).json({ error: 'Usuário inválido' });
+
+    if (Number(user.tokenVersion || 0) !== Number(payload.tokenVersion || 0)) {
+      clearSessionCookies(res);
+      return res.status(401).json({ error: 'Sessão expirada' });
+    }
+
+    const hashed = hashTokenValue(refreshToken);
+    if (!user.refreshTokenHash || user.refreshTokenHash !== hashed) {
+      clearSessionCookies(res);
+      return res.status(401).json({ error: 'Refresh token revogado' });
+    }
+
+    await establishSession(res, user);
+    return res.json({ success: true });
+  } catch (err) {
+    clearSessionCookies(res);
+    return res.status(401).json({ error: 'Falha ao renovar sessão' });
+  }
+});
+
+app.post('/auth/logout', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (user) {
+      await user.update({ tokenVersion: Number(user.tokenVersion || 0) + 1, refreshTokenHash: null });
+    }
+    clearSessionCookies(res);
+    await logAudit(req, 'logout', 'auth', req.user?.id || null, { success: true });
+    return res.json({ success: true });
+  } catch (err) {
+    clearSessionCookies(res);
+    return res.status(500).json({ error: 'Falha ao encerrar sessão' });
+  }
+});
+
+app.get('/auth/csrf', (req, res) => {
+  const csrfToken = issueCsrfToken(res);
+  return res.json({ csrfToken });
+});
+
 // ===== SELF-REGISTER (public) =====
-app.post('/auth/self-register', async (req, res) => {
+app.post('/auth/self-register', authLimiter, async (req, res) => {
   try {
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
     if (!checkRegisterRateLimit(ip)) {
@@ -904,7 +1196,7 @@ app.post('/auth/self-register', async (req, res) => {
     }
 
     if (!validatePasswordStrength(password)) {
-      return res.status(400).json({ error: 'Senha fraca. Use no mínimo 8 caracteres com maiúscula, minúscula, número e símbolo.' });
+      return res.status(400).json({ error: 'Senha fraca. Use no mínimo 12 caracteres com maiúscula, minúscula, número e símbolo.' });
     }
 
     const cpfClean = cpf.replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
@@ -923,7 +1215,7 @@ app.post('/auth/self-register', async (req, res) => {
       return res.status(409).json({ error: 'Este e-mail já está em uso no sistema.' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     await TechRegistration.create({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
@@ -947,7 +1239,7 @@ app.post('/auth/self-register', async (req, res) => {
 // ===== ADMIN: LIST REGISTRATIONS =====
 app.get('/admin/registrations', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const status = req.query.status || 'pending';
+    const status = z.enum(['pending', 'approved', 'rejected', 'all']).catch('pending').parse(req.query.status || 'pending');
     const where = status === 'all' ? {} : { status };
     const regs = await TechRegistration.findAll({ where, order: [['createdAt', 'DESC']] });
     // Never return passwordHash
@@ -1578,10 +1870,13 @@ app.patch('/screens/:id', authenticateToken, async (req, res) => {
 // Screen diagnostics — historical telemetry analysis
 app.get('/screens/:id/diagnostics', authenticateToken, async (req, res) => {
   try {
-    const screen = await Screen.findByPk(req.params.id);
+    const screenId = parseNumericIdParam(req, res, 'id');
+    if (screenId === null) return;
+
+    const screen = await Screen.findByPk(screenId);
     if (!screen) return res.status(404).json({ error: 'Screen not found' });
 
-    const hours = parseInt(req.query.hours) || 24;
+    const hours = getPositiveInt(req.query.hours, 24, { min: 1, max: 720 });
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
     const snapshots = await TelemetrySnapshot.findAll({
@@ -1809,6 +2104,7 @@ app.get('/screens/export/:format', authenticateToken, async (req, res) => {
 app.get('/backups', authenticateToken, requireAdmin, (req, res) => {
   try {
     const backups = backup.listBackups();
+    logAudit(req, 'list', 'backup', null, { total: backups.length });
     res.json(backups);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1821,7 +2117,9 @@ app.post('/backups', authenticateToken, requireAdmin, (req, res) => {
     if (!result) {
       return res.status(400).json({ error: 'Backup failed — database may be empty or missing' });
     }
-    res.json({ message: 'Backup criado com sucesso', path: result });
+    const backupName = String(result).split(/[/\\]/).pop();
+    logAudit(req, 'create', 'backup', null, { backup: backupName });
+    res.json({ message: 'Backup criado com sucesso', name: backupName });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1829,13 +2127,16 @@ app.post('/backups', authenticateToken, requireAdmin, (req, res) => {
 
 app.post('/backups/restore', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) {
+    const parsed = z.object({ name: z.string().min(1).max(200) }).strict().safeParse(req.body || {});
+    if (!parsed.success) {
       return res.status(400).json({ error: 'Backup name is required' });
     }
+    const { name } = parsed.data;
+
     backup.restoreBackup(name);
     // Re-sync Sequelize after restore
     await sequelize.sync();
+    await logAudit(req, 'restore', 'backup', null, { backup: name });
     res.json({ message: 'Backup restaurado com sucesso. Reinicie o servidor para garantir consistência.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2426,9 +2727,11 @@ app.get('/screens/:id/maintenance-history', authenticateToken, async (req, res) 
 app.get('/schedules', authenticateToken, async (req, res) => {
   try {
     const where = {};
-    if (req.query.month && req.query.year) {
-      const start = new Date(req.query.year, req.query.month - 1, 1);
-      const end = new Date(req.query.year, req.query.month, 0);
+    const month = getPositiveInt(req.query.month, null, { min: 1, max: 12 });
+    const year = getPositiveInt(req.query.year, null, { min: 2000, max: 2100 });
+    if (month && year) {
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 0);
       where.scheduledDate = { [Op.between]: [start.toISOString().split('T')[0], end.toISOString().split('T')[0]] };
     }
     if (req.query.assignedTo) where.assignedTo = req.query.assignedTo;
@@ -2580,7 +2883,7 @@ app.delete('/checklist-templates/:id', authenticateToken, async (req, res) => {
 // ===== SCREEN FAVORITES =====
 
 // ===== NOTIFICATION CONFIG =====
-app.get('/notification-config', authenticateToken, async (req, res) => {
+app.get('/notification-config', authenticateToken, requireAdmin, async (req, res) => {
   try {
     let config = await NotificationConfig.findOne();
     if (!config) config = await NotificationConfig.create({});
@@ -2588,7 +2891,7 @@ app.get('/notification-config', authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.patch('/notification-config', authenticateToken, async (req, res) => {
+app.patch('/notification-config', authenticateToken, requireAdmin, async (req, res) => {
   try {
     let config = await NotificationConfig.findOne();
     if (!config) config = await NotificationConfig.create({});
@@ -2605,7 +2908,7 @@ app.patch('/notification-config', authenticateToken, async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-app.post('/notification-config/test', authenticateToken, async (req, res) => {
+app.post('/notification-config/test', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { phone } = req.body;
     const config = await NotificationConfig.findOne();
@@ -2652,15 +2955,18 @@ app.patch('/screens/:id/coordinates', authenticateToken, async (req, res) => {
 // ===== SLA/UPTIME ENDPOINT =====
 app.get('/screens/:id/sla', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
-    const sla = await calculateSLA(req.params.id, days);
+    const screenId = parseNumericIdParam(req, res, 'id');
+    if (screenId === null) return;
+
+    const days = getPositiveInt(req.query.days, 30, { min: 1, max: 365 });
+    const sla = await calculateSLA(screenId, days);
     res.json(sla);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/sla/overview', authenticateToken, async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
+    const days = getPositiveInt(req.query.days, 30, { min: 1, max: 365 });
     const screens = await Screen.findAll({ where: { status: { [Op.in]: ['online', 'offline'] } } });
     const results = [];
     for (const s of screens) {
@@ -2683,7 +2989,7 @@ app.get('/patterns', authenticateToken, async (req, res) => {
 // ===== AUDIT LOG =====
 app.get('/audit-logs', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = getPositiveInt(req.query.limit, 100, { min: 1, max: 1000 });
     const logs = await AuditLog.findAll({ order: [['createdAt', 'DESC']], limit });
     res.json(logs);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2847,7 +3153,14 @@ app.get('/vendors', authenticateToken, requireAdmin, async (req, res) => {
 
 app.post('/vendors', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { name, phone, email } = req.body;
+    const parsed = z.object({
+      name: z.string().trim().min(1).max(120),
+      phone: z.string().trim().min(8).max(30),
+      email: z.string().trim().email().optional().or(z.literal(''))
+    }).strict().safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: 'Dados inválidos para vendedor' });
+
+    const { name, phone, email } = parsed.data;
     if (!name || !phone) return res.status(400).json({ error: 'Nome e telefone são obrigatórios' });
     const vendor = await Vendor.create({ name, phone, email });
     res.status(201).json(vendor);
@@ -2856,9 +3169,17 @@ app.post('/vendors', authenticateToken, requireAdmin, async (req, res) => {
 
 app.patch('/vendors/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const parsed = z.object({
+      name: z.string().trim().min(1).max(120).optional(),
+      phone: z.string().trim().min(8).max(30).optional(),
+      email: z.string().trim().email().optional().or(z.literal('')),
+      active: z.boolean().optional()
+    }).strict().safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: 'Payload inválido para atualização de vendedor' });
+
     const vendor = await Vendor.findByPk(req.params.id);
     if (!vendor) return res.status(404).json({ error: 'Vendedor não encontrado' });
-    await vendor.update(req.body);
+    await vendor.update(parsed.data);
     res.json(vendor);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -2969,13 +3290,17 @@ app.listen(port, () => console.log(`API listening on ${port}`));
 // === Periodic sync with original system (sistema.redeintermidia.com)
 // Scrapes the monitoring page to get real-time status of all monitors
 const https = require('https');
-const ORIGIN_BASE = process.env.ORIGIN_BASE || 'https://sistema.redeintermidia.com';
-const ORIGIN_USER = process.env.ORIGIN_USER || 'Intermidia';
-const ORIGIN_PASS = process.env.ORIGIN_PASS || 'Intermidia2025@';
+const ORIGIN_BASE = process.env.ORIGIN_BASE;
+const ORIGIN_USER = process.env.ORIGIN_USER;
+const ORIGIN_PASS = process.env.ORIGIN_PASS;
 const SYNC_INTERVAL_MS = 120000; // 2 minutes
 const LOOP_TARGET_SECONDS = parseInt(process.env.LOOP_TARGET_SECONDS || '180', 10);
 const LOOP_SYNC_INTERVAL_MS = parseInt(process.env.LOOP_SYNC_INTERVAL_MS || String(7 * 24 * 60 * 60 * 1000), 10); // 1 week
 const originHttpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+if (!ORIGIN_BASE || !ORIGIN_USER || !ORIGIN_PASS) {
+  throw new Error('Missing ORIGIN_BASE, ORIGIN_USER or ORIGIN_PASS environment variables');
+}
 
 let originCookies = '';
 let loopSyncInProgress = false;
@@ -3756,10 +4081,10 @@ async function syncLoopAuditsFromOrigin(reason = 'manual') {
 
 app.get('/loops/summary', authenticateToken, async (req, res) => {
   try {
-    const risk = String(req.query.risk || 'all').toLowerCase();
-    const limit = Math.min(parseInt(req.query.limit || '300', 10) || 300, 1000);
+    const risk = z.enum(['all', 'critical', 'high', 'medium', 'low', 'unknown']).catch('all').parse(String(req.query.risk || 'all').toLowerCase());
+    const limit = getPositiveInt(req.query.limit, 300, { min: 1, max: 1000 });
     const where = { originId: { [Op.notIn]: [...ORIGIN_SCRAPE_EXCLUDED_IDS] } };
-    if (['critical', 'high', 'medium', 'low', 'unknown'].includes(risk)) {
+    if (risk !== 'all') {
       where.riskLevel = risk;
     }
 

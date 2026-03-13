@@ -9,7 +9,9 @@ import {
 } from 'react-icons/fi';
 import './NotificationCenter.css';
 
-function NotificationCenter({ authToken }) {
+const API_BASE = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : `${window.location.protocol}//${window.location.host}`);
+
+function NotificationCenter() {
   const [notifications, setNotifications] = useState([]);
   const [showCenter, setShowCenter] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -19,11 +21,11 @@ function NotificationCenter({ authToken }) {
     const fetchAlerts = async () => {
       try {
         const [alertsRes, countRes] = await Promise.all([
-          axios.get('http://localhost:3001/alerts', {
-            headers: { Authorization: authToken }
+          axios.get(`${API_BASE}/alerts`, {
+            withCredentials: true
           }),
-          axios.get('http://localhost:3001/alerts/count', {
-            headers: { Authorization: authToken }
+          axios.get(`${API_BASE}/alerts/count`, {
+            withCredentials: true
           })
         ]);
         
@@ -37,12 +39,12 @@ function NotificationCenter({ authToken }) {
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 15000); // Check every 15 seconds
     return () => clearInterval(interval);
-  }, [authToken]);
+  }, []);
 
   const dismissAlert = async (alertId) => {
     try {
-      await axios.put(`http://localhost:3001/alerts/${alertId}/dismiss`, {}, {
-        headers: { Authorization: authToken }
+      await axios.put(`${API_BASE}/alerts/${alertId}/dismiss`, {}, {
+        withCredentials: true
       });
       setNotifications(notifications.filter(n => n.id !== alertId));
     } catch (err) {
@@ -52,8 +54,8 @@ function NotificationCenter({ authToken }) {
 
   const markAsRead = async (alertId) => {
     try {
-      await axios.put(`http://localhost:3001/alerts/${alertId}/read`, {}, {
-        headers: { Authorization: authToken }
+      await axios.put(`${API_BASE}/alerts/${alertId}/read`, {}, {
+        withCredentials: true
       });
       setNotifications(notifications.map(n => 
         n.id === alertId ? { ...n, read: true } : n

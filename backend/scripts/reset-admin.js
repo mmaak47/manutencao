@@ -6,9 +6,15 @@ async function resetAdmin() {
   try {
     await sequelize.sync();
 
-    const username = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
-    const password = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
-    const passwordHash = await bcrypt.hash(password, 10);
+    const username = process.env.DEFAULT_ADMIN_USERNAME;
+    const password = process.env.DEFAULT_ADMIN_PASSWORD;
+    if (!username || !password) {
+      throw new Error('Set DEFAULT_ADMIN_USERNAME and DEFAULT_ADMIN_PASSWORD before running reset-admin');
+    }
+    if (password.length < 12) {
+      throw new Error('DEFAULT_ADMIN_PASSWORD must be at least 12 characters');
+    }
+    const passwordHash = await bcrypt.hash(password, 12);
 
     const existing = await User.findOne({ where: { username } });
 

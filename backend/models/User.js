@@ -22,9 +22,18 @@ const User = sequelize.define('User', {
     allowNull: false
   },
   role: {
-    type: DataTypes.ENUM('admin', 'user'),
+    type: DataTypes.ENUM('admin', 'user', 'comercial'),
     allowNull: false,
     defaultValue: 'user'
+  },
+  tokenVersion: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
+  },
+  refreshTokenHash: {
+    type: DataTypes.STRING,
+    allowNull: true
   },
   active: {
     type: DataTypes.BOOLEAN,

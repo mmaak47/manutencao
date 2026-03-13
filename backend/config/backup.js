@@ -4,6 +4,15 @@ const path = require('path');
 const DB_PATH = path.join(__dirname, '..', 'database.sqlite');
 const BACKUP_DIR = path.join(__dirname, '..', 'backups');
 const MAX_BACKUPS = 20;
+const BACKUP_FILE_PATTERN = /^database_[0-9T\-:.]+(?:_[a-z0-9_-]+)?\.sqlite$/i;
+
+function validateBackupName(name) {
+  const base = path.basename(String(name || ''));
+  if (!base || base !== name || !BACKUP_FILE_PATTERN.test(base)) {
+    throw new Error('Invalid backup name');
+  }
+  return base;
+}
 
 function ensureBackupDir() {
   if (!fs.existsSync(BACKUP_DIR)) {
@@ -77,17 +86,18 @@ function listBackups() {
 }
 
 function restoreBackup(backupName) {
-  const backupPath = path.join(BACKUP_DIR, backupName);
+  const safeName = validateBackupName(backupName);
+  const backupPath = path.join(BACKUP_DIR, safeName);
 
   if (!fs.existsSync(backupPath)) {
-    throw new Error('Backup not found: ' + backupName);
+    throw new Error('Backup not found: ' + safeName);
   }
 
   // Safety: create a backup of current state before restoring
   createBackup('pre-restore');
 
   fs.copyFileSync(backupPath, DB_PATH);
-  console.log('[Backup] Restored from: ' + backupName);
+  console.log('[Backup] Restored from: ' + safeName);
   return true;
 }
 

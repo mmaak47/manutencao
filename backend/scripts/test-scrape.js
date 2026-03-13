@@ -2,6 +2,12 @@ const axios = require('axios');
 const https = require('https');
 const agent = new https.Agent({ rejectUnauthorized: false });
 const BASE = 'https://sistema.redeintermidia.com';
+const ORIGIN_USER = process.env.ORIGIN_USER;
+const ORIGIN_PASS = process.env.ORIGIN_PASS;
+
+if (!ORIGIN_USER || !ORIGIN_PASS) {
+  throw new Error('Set ORIGIN_USER and ORIGIN_PASS before running test-scrape.js');
+}
 
 async function test() {
   // Login
@@ -10,7 +16,7 @@ async function test() {
   });
   const cookies = (loginPage.headers['set-cookie'] || []).map(c => c.split(';')[0]).join('; ');
   await axios.post(`${BASE}/login/verifica`, 
-    `login=${encodeURIComponent('Intermidia')}&senha=${encodeURIComponent('Intermidia2025@')}`,
+    `login=${encodeURIComponent(ORIGIN_USER)}&senha=${encodeURIComponent(ORIGIN_PASS)}`,
     {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookies },
       maxRedirects: 0, timeout: 15000, httpsAgent: agent, validateStatus: () => true

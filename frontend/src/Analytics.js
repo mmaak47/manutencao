@@ -12,7 +12,9 @@ import {
 } from 'react-icons/fi';
 import './Analytics.css';
 
-function Analytics({ authToken, onClose }) {
+const API_BASE = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : `${window.location.protocol}//${window.location.host}`);
+
+function Analytics({ onClose }) {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -25,8 +27,8 @@ function Analytics({ authToken, onClose }) {
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('http://localhost:3001/analytics', {
-        headers: { Authorization: authToken }
+      const response = await axios.get(`${API_BASE}/analytics`, {
+        withCredentials: true
       });
       setAnalytics(response.data);
       setError('');
@@ -41,8 +43,8 @@ function Analytics({ authToken, onClose }) {
   const handleExport = async (format) => {
     setExporting(true);
     try {
-      const response = await axios.get(`http://localhost:3001/screens/export/${format}`, {
-        headers: { Authorization: authToken },
+      const response = await axios.get(`${API_BASE}/screens/export/${format}`, {
+        withCredentials: true,
         responseType: format === 'csv' ? 'blob' : 'json'
       });
 
