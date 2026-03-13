@@ -412,6 +412,18 @@ async function generateUniqueUsername(email, fallback = 'user') {
   return candidate;
 }
 
+async function getApprovedRegistrationPhotoByEmail(email) {
+  const normalizedEmail = normalizeEmail(email || '');
+  if (!normalizedEmail) return null;
+
+  const reg = await TechRegistration.findOne({
+    where: { status: 'approved', email: normalizedEmail },
+    attributes: ['photoData']
+  });
+
+  return reg?.photoData || null;
+}
+
 // Initialize database
 sequelize.sync().then(async () => {
   await sequelize.query('PRAGMA journal_mode = WAL;');
@@ -1071,6 +1083,7 @@ app.post('/auth/login', loginLimiter, authLimiter, async (req, res) => {
     }
 
     const token = await establishSession(res, user);
+    const photoData = await getApprovedRegistrationPhotoByEmail(user.email);
     await logAudit({ ip: req.ip, user: { id: user.id, username: user.username } }, 'login-success', 'auth', user.id, { role: normalizeUserRole(user.role) });
     res.json({
       token,
@@ -1080,6 +1093,7 @@ app.post('/auth/login', loginLimiter, authLimiter, async (req, res) => {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        photoData,
         role: normalizeUserRole(user.role)
       }
     });
@@ -1098,12 +1112,15 @@ app.get('/auth/me', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    const photoData = await getApprovedRegistrationPhotoByEmail(user.email);
+
     res.json({
       id: user.id,
       username: user.username,
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
+      photoData,
       role: normalizeUserRole(user.role)
     });
   } catch (err) {

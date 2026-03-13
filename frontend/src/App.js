@@ -2600,7 +2600,9 @@ function App() {
           <div className="user-actions" ref={userMenuRef}>
             <div className="sidebar-user" onClick={() => setShowUserMenu((prev) => !prev)}>
               <div className="sidebar-avatar">
-                {getUserInitial(currentUser)}
+                {currentUser?.photoData
+                  ? <img src={currentUser.photoData} alt="Foto do usuário" className="sidebar-avatar-image" />
+                  : getUserInitial(currentUser)}
               </div>
               <div className="sidebar-user-info">
                 <div className="sidebar-user-name">{getUserDisplayName(currentUser)}</div>
