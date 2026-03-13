@@ -46,8 +46,11 @@ const SLA_AUTOMATION_INTERVAL_MS = 15 * 60 * 1000;
 const PREVENTIVE_LOOKBACK_DAYS = 45;
 const PREVENTIVE_TELEMETRY_LOOKBACK_HOURS = 72;
 const MAX_PREVENTIVE_PER_DAY = Number(process.env.MAX_PREVENTIVE_PER_DAY || 2);
+const PREVENTIVE_LEARNING_DAYS = Math.max(0, Number(process.env.PREVENTIVE_LEARNING_DAYS || 30));
+const PREVENTIVE_LEARNING_START = process.env.PREVENTIVE_LEARNING_START || '2026-03-13';
 const CONTRACT_NOTIFY_THRESHOLDS_DAYS = [15, 5];
 const CONTRACT_TOTAL_CYCLE_SLOTS = Number(process.env.CONTRACT_TOTAL_CYCLE_SLOTS || 3);
+let preventiveLearningLastLogKey = null;
 
 function normalizeUserRole(role) {
   return String(role || '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
@@ -86,6 +89,48 @@ function formatHoursDuration(hours) {
 
 function normalizeScheduleDate(date) {
   return new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+}
+
+function getPreventiveLearningStatus(now = new Date()) {
+  if (!PREVENTIVE_LEARNING_DAYS) {
+    return {
+      enabled: false,
+      active: false,
+      startDate: null,
+      endDate: null,
+      remainingDays: 0,
+      progressPct: 100
+    };
+  }
+
+  const parsedStart = new Date(PREVENTIVE_LEARNING_START);
+  if (Number.isNaN(parsedStart.getTime())) {
+    return {
+      enabled: true,
+      active: false,
+      startDate: PREVENTIVE_LEARNING_START,
+      endDate: null,
+      remainingDays: 0,
+      progressPct: 100,
+      invalidStartDate: true
+    };
+  }
+
+  const windowMs = PREVENTIVE_LEARNING_DAYS * 24 * 60 * 60 * 1000;
+  const endDate = new Date(parsedStart.getTime() + windowMs);
+  const remainingMs = endDate.getTime() - now.getTime();
+  const active = remainingMs > 0;
+  const elapsedMs = Math.max(0, now.getTime() - parsedStart.getTime());
+  const progressPct = Math.max(0, Math.min(100, Math.round((elapsedMs / windowMs) * 100)));
+
+  return {
+    enabled: true,
+    active,
+    startDate: parsedStart.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0],
+    remainingDays: active ? Math.ceil(remainingMs / (24 * 60 * 60 * 1000)) : 0,
+    progressPct
+  };
 }
 
 // ===== SELF-REGISTER HELPERS =====
@@ -526,6 +571,16 @@ async function processTicketSlaEscalations() {
 }
 
 async function processPreventiveSchedules() {
+  const learningStatus = getPreventiveLearningStatus();
+  if (learningStatus.active) {
+    const logKey = `${learningStatus.startDate}-${learningStatus.endDate}-${learningStatus.remainingDays}`;
+    if (preventiveLearningLastLogKey !== logKey) {
+      console.log(`Preventive automation paused (learning mode). Remaining: ${learningStatus.remainingDays} day(s). Start: ${learningStatus.startDate}. End: ${learningStatus.endDate}.`);
+      preventiveLearningLastLogKey = logKey;
+    }
+    return;
+  }
+
   const ticketSince = new Date(Date.now() - PREVENTIVE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
   const telemetrySince = new Date(Date.now() - PREVENTIVE_TELEMETRY_LOOKBACK_HOURS * 60 * 60 * 1000);
   const screens = await Screen.findAll({ where: { status: { [Op.notIn]: ['static', 'not_installed'] } } });
@@ -624,6 +679,30 @@ async function runOperationalAutomation() {
   await processTicketSlaEscalations();
   await processPreventiveSchedules();
 }
+
+app.get('/operational/preventive-status', authenticateToken, async (req, res) => {
+  try {
+    const learning = getPreventiveLearningStatus();
+    const pendingPreventive = await Schedule.count({
+      where: {
+        status: { [Op.in]: ['scheduled', 'in_progress'] },
+        title: { [Op.like]: 'Preventiva automática%' }
+      }
+    });
+
+    res.json({
+      automation: {
+        maxPreventivePerDay: MAX_PREVENTIVE_PER_DAY,
+        lookbackDays: PREVENTIVE_LOOKBACK_DAYS,
+        telemetryLookbackHours: PREVENTIVE_TELEMETRY_LOOKBACK_HOURS
+      },
+      learning,
+      pendingPreventive
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao consultar status da preventiva' });
+  }
+});
 
 async function bootstrapAdmin() {
   try {
