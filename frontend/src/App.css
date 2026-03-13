@@ -298,6 +298,7 @@
   width: 34px;
   height: 34px;
   border-radius: 50%;
+  overflow: hidden;
   background: var(--accent);
   color: #FFFFFF;
   display: flex;
@@ -318,6 +319,10 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text-on-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .sidebar-avatar-image {
   width: 100%;
@@ -325,10 +330,6 @@
   border-radius: 50%;
   object-fit: cover;
   display: block;
-}
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .sidebar-user-role {
