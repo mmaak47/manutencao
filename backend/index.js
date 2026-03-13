@@ -56,7 +56,7 @@ if (!ALLOWED_ORIGINS.length) {
 const isProduction = process.env.NODE_ENV === 'production';
 const COOKIE_SECURE = process.env.COOKIE_SECURE
   ? process.env.COOKIE_SECURE === 'true'
-  : isProduction;
+  : false;
 const ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_TTL || '15m';
 const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_TTL || '7d';
 const BCRYPT_ROUNDS = Math.max(12, Number(process.env.BCRYPT_ROUNDS || 12));
