@@ -42,6 +42,7 @@ Contract.belongsTo(Vendor, { foreignKey: 'vendorId' });
 Vendor.hasMany(Contract, { foreignKey: 'vendorId' });
 
 const app = express();
+app.set('trust proxy', 1);
 
 const ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
