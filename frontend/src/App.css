@@ -755,9 +755,6 @@
   border-right: 1px solid var(--border);
 }
 
-.right-panel {
-}
-
 /* Resize Divider */
 .resize-divider-horizontal {
   width: 4px;
@@ -1710,6 +1707,120 @@
 /* History Tab */
 .history-tab { padding: 16px 20px; }
 
+.history-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.history-summary-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-summary-card.money {
+  border-left: 3px solid #16a34a;
+}
+
+.history-summary-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.history-summary-card strong {
+  font-size: 16px;
+  color: var(--text);
+  font-family: 'Poppins', sans-serif;
+}
+
+.history-recommendations {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.history-recommendations h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-family: 'Poppins', sans-serif;
+}
+
+.history-recommendation-item {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 0;
+}
+
+.history-panels-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.history-ticket-list,
+.history-mixed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-ticket-item,
+.history-mixed-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.history-ticket-item strong,
+.history-mixed-item strong {
+  display: block;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.history-ticket-item small,
+.history-mixed-item small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.history-ticket-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.history-mixed-item.alert-critical,
+.history-mixed-item.alert-error {
+  border-left: 3px solid var(--danger);
+}
+
+.history-mixed-item.alert-warning {
+  border-left: 3px solid #f59e0b;
+}
+
 .history-filters {
   display: flex;
   gap: 10px;
@@ -2290,6 +2401,7 @@
 .ticket-stat-card.info { border-left: 3px solid #3b82f6; }
 .ticket-stat-card.success { border-left: 3px solid #22c55e; }
 .ticket-stat-card.neutral { border-left: 3px solid #94a3b8; }
+.ticket-stat-card.money { border-left: 3px solid #16a34a; }
 .an-card.accent { border-left: 3px solid var(--accent); }
 .an-card.success { border-left: 3px solid #22c55e; }
 
@@ -2355,6 +2467,7 @@
   color: var(--text-secondary);
   margin: 0 0 8px;
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;

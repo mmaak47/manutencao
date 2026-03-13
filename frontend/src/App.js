@@ -9,6 +9,8 @@ import './App.css';
 
 const API_BASE = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : `${window.location.protocol}//${window.location.host}`);
 const REPORT_STORAGE_KEY = 'maintenance_report_rows_v1';
+const EMPTY_TICKET_FORM = { title: '', description: '', category: 'general', priority: 'medium', screenId: '', assignedTo: '', timeSpentMinutes: '', actualCost: '' };
+const EMPTY_SCHEDULE_FORM = { title: '', description: '', scheduledDate: '', scheduledTime: '', assignedTo: '', screenId: '', location: '', color: '#E95D34' };
 
 function App() {
   const [screens, setScreens] = useState([]);
@@ -96,12 +98,12 @@ function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true');
   const [tickets, setTickets] = useState([]);
   const [showTicketModal, setShowTicketModal] = useState(false);
-  const [ticketForm, setTicketForm] = useState({ title: '', description: '', category: 'general', priority: 'medium', screenId: '', assignedTo: '' });
+  const [ticketForm, setTicketForm] = useState(EMPTY_TICKET_FORM);
   const [editingTicket, setEditingTicket] = useState(null);
   const [ticketFilter, setTicketFilter] = useState('all');
   const [schedules, setSchedules] = useState([]);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [scheduleForm, setScheduleForm] = useState({ title: '', description: '', scheduledDate: '', scheduledTime: '', assignedTo: '', screenId: '', location: '', color: '#E95D34' });
+  const [scheduleForm, setScheduleForm] = useState(EMPTY_SCHEDULE_FORM);
   const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [parts, setParts] = useState([]);
@@ -125,6 +127,8 @@ function App() {
   const [diagnosticsData, setDiagnosticsData] = useState(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsHours, setDiagnosticsHours] = useState(24);
+  const [maintenanceHistoryData, setMaintenanceHistoryData] = useState(null);
+  const [maintenanceHistoryLoading, setMaintenanceHistoryLoading] = useState(false);
 
   // Contracts & Vendors
   const [contracts, setContracts] = useState([]);
@@ -277,6 +281,11 @@ function App() {
 
   const showAlert = (message, type = 'info') => {
     setAppAlert({ open: true, message, type });
+  };
+
+  const formatCurrency = (value) => {
+    const amount = Number(value || 0);
+    return amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };
 
   const getPhoneDigits = (phoneValue = '') => phoneValue.replace(/\D/g, '');
@@ -568,6 +577,20 @@ function App() {
     } catch (err) { console.error('Error fetching patterns:', err); }
   };
 
+  const fetchMaintenanceHistory = async (screenId) => {
+    if (!authToken || !screenId) return;
+    setMaintenanceHistoryLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/screens/${screenId}/maintenance-history`, authConfig);
+      setMaintenanceHistoryData(res.data);
+    } catch (err) {
+      console.error('Error fetching maintenance history:', err);
+      setMaintenanceHistoryData(null);
+    } finally {
+      setMaintenanceHistoryLoading(false);
+    }
+  };
+
   const fetchLoopAudits = async () => {
     if (!authToken) return;
     setLoopAuditLoading(true);
@@ -651,7 +674,7 @@ function App() {
       }
       setShowTicketModal(false);
       setEditingTicket(null);
-      setTicketForm({ title: '', description: '', category: 'general', priority: 'medium', screenId: '', assignedTo: '' });
+      setTicketForm(EMPTY_TICKET_FORM);
       fetchTickets();
       fetchTicketStats();
     } catch (err) { showAlert('Erro: ' + (err.response?.data?.error || err.message), 'error'); }
@@ -681,7 +704,7 @@ function App() {
       await axios.post(`${API_BASE}/schedules`, scheduleForm, authConfig);
       showAlert('Agendamento criado!', 'success');
       setShowScheduleModal(false);
-      setScheduleForm({ title: '', description: '', scheduledDate: '', scheduledTime: '', assignedTo: '', screenId: '', location: '', color: '#E95D34' });
+      setScheduleForm(EMPTY_SCHEDULE_FORM);
       fetchSchedules();
     } catch (err) { showAlert('Erro: ' + (err.response?.data?.error || err.message), 'error'); }
   };
@@ -1082,6 +1105,7 @@ function App() {
       fetchEvents(selected.id);
       setActiveTab('details');
       setDiagnosticsData(null);
+      setMaintenanceHistoryData(null);
       setTimeout(() => {
         detailPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
@@ -1090,6 +1114,12 @@ function App() {
       setEvents([]);
     }
   }, [selected]);
+
+  useEffect(() => {
+    if (!selected?.id || activeTab !== 'history') return;
+    if (maintenanceHistoryData?.screenId === selected.id) return;
+    fetchMaintenanceHistory(selected.id);
+  }, [activeTab, selected?.id]);
 
   useEffect(() => {
     if (!selected) return;
@@ -2799,7 +2829,7 @@ function App() {
                 </button>
                 <button
                   className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('history')}
+                  onClick={() => { setActiveTab('history'); if (!maintenanceHistoryData || maintenanceHistoryData.screenId !== selected.id) fetchMaintenanceHistory(selected.id); }}
                 >
                   Historico
                 </button>
@@ -3040,6 +3070,75 @@ function App() {
 
               {activeTab === 'history' && (
                 <div className="history-tab">
+                  {maintenanceHistoryLoading ? (
+                    <div className="events-empty">Carregando histórico operacional...</div>
+                  ) : maintenanceHistoryData?.summary ? (
+                    <>
+                      <div className="history-summary-grid">
+                        <div className="history-summary-card"><span className="history-summary-label">Tickets</span><strong>{maintenanceHistoryData.summary.totalTickets}</strong></div>
+                        <div className="history-summary-card"><span className="history-summary-label">Em aberto</span><strong>{maintenanceHistoryData.summary.openTickets}</strong></div>
+                        <div className="history-summary-card"><span className="history-summary-label">Preventivas</span><strong>{maintenanceHistoryData.summary.preventiveSchedules}</strong></div>
+                        <div className="history-summary-card"><span className="history-summary-label">Tempo gasto</span><strong>{maintenanceHistoryData.summary.totalTimeMinutes || 0} min</strong></div>
+                        <div className="history-summary-card money"><span className="history-summary-label">Custo acumulado</span><strong>{formatCurrency(maintenanceHistoryData.summary.totalCost)}</strong></div>
+                        <div className="history-summary-card"><span className="history-summary-label">Resolução média</span><strong>{maintenanceHistoryData.summary.avgResolutionHours > 0 ? `${maintenanceHistoryData.summary.avgResolutionHours}h` : '-'}</strong></div>
+                      </div>
+
+                      {maintenanceHistoryData.summary.recommendations?.length > 0 && (
+                        <div className="history-recommendations">
+                          <h4>Recomendações</h4>
+                          {maintenanceHistoryData.summary.recommendations.map((item) => (
+                            <div key={item} className="history-recommendation-item">{item}</div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="history-panels-grid">
+                        <div className="events-section">
+                          <h4>Tickets da Tela</h4>
+                          {maintenanceHistoryData.tickets.length === 0 ? (
+                            <div className="events-empty">Nenhum ticket vinculado</div>
+                          ) : (
+                            <div className="history-ticket-list">
+                              {maintenanceHistoryData.tickets.slice(0, 8).map((ticket) => (
+                                <div key={ticket.id} className="history-ticket-item">
+                                  <div>
+                                    <strong>#{ticket.id} {ticket.title}</strong>
+                                    <small>{ticket.status} • {ticket.category} • {new Date(ticket.createdAt).toLocaleDateString('pt-BR')}</small>
+                                  </div>
+                                  <div className="history-ticket-metrics">
+                                    <span>{ticket.timeSpentMinutes || 0} min</span>
+                                    <span>{formatCurrency(ticket.totalCost)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="events-section">
+                          <h4>Preventivas e Alertas</h4>
+                          <div className="history-mixed-list">
+                            {maintenanceHistoryData.schedules.slice(0, 5).map((schedule) => (
+                              <div key={`schedule-${schedule.id}`} className="history-mixed-item">
+                                <strong>{schedule.title}</strong>
+                                <small>{new Date(`${schedule.scheduledDate}T12:00:00`).toLocaleDateString('pt-BR')} • {schedule.status}</small>
+                              </div>
+                            ))}
+                            {maintenanceHistoryData.alerts.slice(0, 5).map((alert) => (
+                              <div key={`alert-${alert.id}`} className={`history-mixed-item alert-${alert.severity}`}>
+                                <strong>{alert.title}</strong>
+                                <small>{new Date(alert.createdAt).toLocaleString('pt-BR')}</small>
+                              </div>
+                            ))}
+                            {maintenanceHistoryData.schedules.length === 0 && maintenanceHistoryData.alerts.length === 0 && (
+                              <div className="events-empty">Nenhuma preventiva ou alerta relevante</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+
                   <div className="history-filters">
                     <div className="filter-field">
                       <label>Status</label>
@@ -3478,7 +3577,7 @@ function App() {
               <button className={`filter-chip ${ticketFilter === 'resolved' ? 'active' : ''}`} onClick={() => setTicketFilter('resolved')}>Resolvidos</button>
               <button className={`filter-chip ${ticketFilter === 'closed' ? 'active' : ''}`} onClick={() => setTicketFilter('closed')}>Fechados</button>
             </div>
-            <button className="btn-primary" onClick={() => { setEditingTicket(null); setTicketForm({ title: '', description: '', category: 'general', priority: 'medium', screenId: '', assignedTo: '' }); setShowTicketModal(true); }}>
+            <button className="btn-primary" onClick={() => { setEditingTicket(null); setTicketForm(EMPTY_TICKET_FORM); setShowTicketModal(true); }}>
               <FiPlus size={14} /> Novo Ticket
             </button>
           </div>
@@ -3492,6 +3591,7 @@ function App() {
             <div className="ticket-stat-card info"><div className="tsc-value">{ticketStats.waiting_part}</div><div className="tsc-label">Aguardando</div></div>
             <div className="ticket-stat-card success"><div className="tsc-value">{ticketStats.resolved + ticketStats.closed}</div><div className="tsc-label">Resolvidos</div></div>
             <div className="ticket-stat-card neutral"><div className="tsc-value">{ticketStats.avgTimeMinutes > 0 ? Math.round(ticketStats.avgTimeMinutes) + 'min' : '-'}</div><div className="tsc-label">Tempo Médio</div></div>
+            <div className="ticket-stat-card money"><div className="tsc-value">{formatCurrency(ticketStats.totalCost)}</div><div className="tsc-label">Custo Total</div></div>
           </div>
         )}
 
@@ -3518,6 +3618,7 @@ function App() {
                   <span><FiClock size={12} /> {new Date(ticket.createdAt).toLocaleDateString('pt-BR')}</span>
                   {ticket.createdBy && <span>por {ticket.createdBy}</span>}
                   {ticket.timeSpentMinutes > 0 && <span><FiClock size={12} /> {ticket.timeSpentMinutes}min gastos</span>}
+                  {(ticket.totalCost > 0 || ticket.actualCost > 0) && <span><FiDollarSign size={12} /> {formatCurrency(ticket.totalCost || ticket.actualCost)}</span>}
                 </div>
               </div>
               <div className="ticket-card-actions">
@@ -3528,7 +3629,7 @@ function App() {
                   <option value="resolved">Resolvido</option>
                   <option value="closed">Fechado</option>
                 </select>
-                <button className="btn-icon" onClick={() => { setEditingTicket(ticket); setTicketForm({ title: ticket.title, description: ticket.description || '', category: ticket.category, priority: ticket.priority, screenId: ticket.screenId || '', assignedTo: ticket.assignedTo || '' }); setShowTicketModal(true); }}><FiEdit size={14} /></button>
+                <button className="btn-icon" onClick={() => { setEditingTicket(ticket); setTicketForm({ title: ticket.title, description: ticket.description || '', category: ticket.category, priority: ticket.priority, screenId: ticket.screenId || '', assignedTo: ticket.assignedTo || '', timeSpentMinutes: ticket.timeSpentMinutes || '', actualCost: ticket.actualCost ?? '' }); setShowTicketModal(true); }}><FiEdit size={14} /></button>
                 <button className="btn-icon btn-icon-danger" onClick={() => deleteTicket(ticket.id)}><FiTrash2 size={14} /></button>
               </div>
             </div>
@@ -3550,7 +3651,7 @@ function App() {
               <span className="calendar-month-label">{new Date(calendarYear, calendarMonth).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span>
               <button className="btn-secondary" onClick={() => { setCalendarMonth(p => p === 11 ? 0 : p + 1); if (calendarMonth === 11) setCalendarYear(p => p + 1); }}><FiChevronRight size={16} /></button>
             </div>
-            <button className="btn-primary" onClick={() => { setScheduleForm({ title: '', description: '', scheduledDate: '', scheduledTime: '', assignedTo: '', screenId: '', location: '', color: '#E95D34' }); setShowScheduleModal(true); }}>
+            <button className="btn-primary" onClick={() => { setScheduleForm(EMPTY_SCHEDULE_FORM); setShowScheduleModal(true); }}>
               <FiPlus size={14} /> Novo Agendamento
             </button>
           </div>
@@ -4850,6 +4951,16 @@ function App() {
               <div className="form-group">
                 <label>Descrição</label>
                 <textarea rows="3" value={ticketForm.description} onChange={(e) => setTicketForm(p => ({ ...p, description: e.target.value }))} placeholder="Detalhes do problema..."></textarea>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Tempo gasto (min)</label>
+                  <input type="number" min="0" value={ticketForm.timeSpentMinutes} onChange={(e) => setTicketForm(p => ({ ...p, timeSpentMinutes: e.target.value }))} placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label>Custo total (R$)</label>
+                  <input type="number" min="0" step="0.01" value={ticketForm.actualCost} onChange={(e) => setTicketForm(p => ({ ...p, actualCost: e.target.value }))} placeholder="Opcional" />
+                </div>
               </div>
             </div>
             <div className="modal-footer">

@@ -23,6 +23,8 @@ const Ticket = sequelize.define('Ticket', {
   resolvedAt: { type: DataTypes.DATE, allowNull: true },
   closedAt: { type: DataTypes.DATE, allowNull: true },
   timeSpentMinutes: { type: DataTypes.INTEGER, defaultValue: 0 },
+  actualCost: { type: DataTypes.FLOAT, allowNull: true },
+  slaEscalatedAt: { type: DataTypes.DATE, allowNull: true },
   checklist: { type: DataTypes.TEXT, allowNull: true },
   location: { type: DataTypes.STRING, allowNull: true },
   city: { type: DataTypes.STRING, allowNull: true }

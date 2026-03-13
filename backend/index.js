@@ -31,6 +31,8 @@ Ticket.belongsTo(Screen, { foreignKey: 'screenId' });
 Screen.hasMany(Ticket, { foreignKey: 'screenId' });
 Schedule.belongsTo(Screen, { foreignKey: 'screenId' });
 Schedule.belongsTo(Ticket, { foreignKey: 'ticketId' });
+Alert.belongsTo(Screen, { foreignKey: 'screenId' });
+Screen.hasMany(Alert, { foreignKey: 'screenId' });
 Contract.belongsTo(Vendor, { foreignKey: 'vendorId' });
 Vendor.hasMany(Contract, { foreignKey: 'vendorId' });
 
@@ -39,6 +41,45 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 
 const OFFLINE_TODO_THRESHOLD_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_TECHNICIAN_HOURLY_RATE = Number(process.env.DEFAULT_TECHNICIAN_HOURLY_RATE || 90);
+const SLA_AUTOMATION_INTERVAL_MS = 15 * 60 * 1000;
+const PREVENTIVE_LOOKBACK_DAYS = 45;
+const PREVENTIVE_TELEMETRY_LOOKBACK_HOURS = 72;
+
+function calculateTicketCost(ticket) {
+  const timeSpentMinutes = Number(ticket?.timeSpentMinutes) || 0;
+  const laborCost = Number(((timeSpentMinutes / 60) * DEFAULT_TECHNICIAN_HOURLY_RATE).toFixed(2));
+  const actualCost = ticket?.actualCost == null ? null : Number(ticket.actualCost);
+  const totalCost = actualCost != null && Number.isFinite(actualCost) ? actualCost : laborCost;
+
+  return {
+    laborCost,
+    totalCost: Number.isFinite(totalCost) ? Number(totalCost.toFixed(2)) : 0,
+    usesActualCost: actualCost != null && Number.isFinite(actualCost)
+  };
+}
+
+function getTicketSlaHours(ticket) {
+  if (ticket.status === 'waiting_part') {
+    return ticket.priority === 'critical' ? 12 : ticket.priority === 'high' ? 24 : ticket.priority === 'medium' ? 48 : 72;
+  }
+
+  if (ticket.priority === 'critical') return 2;
+  if (ticket.priority === 'high') return 6;
+  if (ticket.priority === 'medium') return 24;
+  return 48;
+}
+
+function formatHoursDuration(hours) {
+  if (!Number.isFinite(hours) || hours <= 0) return '0h';
+  if (hours < 1) return `${Math.round(hours * 60)}min`;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
+function normalizeScheduleDate(date) {
+  return new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+}
 
 // ===== SELF-REGISTER HELPERS =====
 const selfRegisterAttempts = new Map();
@@ -115,8 +156,15 @@ async function generateUniqueUsername(email, fallback = 'user') {
 sequelize.sync().then(async () => {
   await ensureScreenColumns();
   await ensureUserColumns();
+  await ensureTicketColumns();
   console.log('Database synced');
   bootstrapAdmin();
+  setTimeout(() => {
+    runOperationalAutomation().catch((err) => console.error('Initial automation error:', err.message));
+    setInterval(() => {
+      runOperationalAutomation().catch((err) => console.error('Automation interval error:', err.message));
+    }, SLA_AUTOMATION_INTERVAL_MS);
+  }, 10000);
 
   // Backup on startup
   backup.createBackup('startup');
@@ -258,6 +306,29 @@ async function ensureUserColumns() {
   }
 }
 
+async function ensureTicketColumns() {
+  try {
+    const queryInterface = sequelize.getQueryInterface();
+    const tableDefinition = await queryInterface.describeTable('tickets');
+
+    if (!tableDefinition.actualCost) {
+      await queryInterface.addColumn('tickets', 'actualCost', {
+        type: DataTypes.FLOAT,
+        allowNull: true
+      });
+    }
+
+    if (!tableDefinition.slaEscalatedAt) {
+      await queryInterface.addColumn('tickets', 'slaEscalatedAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      });
+    }
+  } catch (err) {
+    console.error('Failed to ensure tickets columns:', err.message);
+  }
+}
+
 // Audit log helper
 async function logAudit(req, action, entity, entityId, details) {
   try {
@@ -303,6 +374,147 @@ async function sendNotification(message, specificPhone) {
       } catch (e) { console.error(`Failed to send to ${phone}:`, e.response?.data || e.message); }
     }
   } catch (e) { console.error('Notification error:', e.message); }
+}
+
+async function createOperationalAlert({ screenId, title, message, severity = 'warning' }) {
+  if (!screenId) return null;
+
+  const existing = await Alert.findOne({
+    where: { screenId, type: 'custom', title, dismissed: false }
+  });
+
+  if (existing) {
+    await existing.update({ message, severity, read: false });
+    return existing;
+  }
+
+  return Alert.create({
+    screenId,
+    type: 'custom',
+    title,
+    message,
+    severity,
+    read: false,
+    dismissed: false
+  });
+}
+
+async function notifyIfConfigured(message, severity = 'warning') {
+  const config = await NotificationConfig.findOne();
+  if (!config?.whatsappEnabled) return;
+  if (severity === 'critical' && !config.notifyOnAlertCritical) return;
+  if (severity === 'warning' && !config.notifyOnAlertWarning) return;
+  await sendNotification(message);
+}
+
+async function processTicketSlaEscalations() {
+  const tickets = await Ticket.findAll({
+    where: {
+      status: { [Op.in]: ['open', 'in_progress', 'waiting_part'] }
+    },
+    include: [{ model: Screen, attributes: ['id', 'name', 'location', 'address', 'priority'] }],
+    order: [['createdAt', 'ASC']]
+  });
+
+  for (const ticket of tickets) {
+    if (ticket.slaEscalatedAt) continue;
+
+    const slaHours = getTicketSlaHours(ticket);
+    const ageHours = (Date.now() - new Date(ticket.createdAt).getTime()) / (1000 * 60 * 60);
+    if (ageHours < slaHours) continue;
+
+    const severity = ticket.priority === 'critical' || ticket.priority === 'high' ? 'critical' : 'warning';
+    const screenName = ticket.Screen?.name || ticket.location || 'Tela sem vínculo';
+    const title = `SLA estourado no ticket #${ticket.id}`;
+    const message = `Ticket "${ticket.title}" está em ${ticket.status} há ${formatHoursDuration(ageHours)}. SLA alvo: ${formatHoursDuration(slaHours)}. Tela/local: ${screenName}.`;
+
+    await createOperationalAlert({ screenId: ticket.screenId || ticket.Screen?.id, title, message, severity });
+    await ticket.update({ slaEscalatedAt: new Date() });
+    await notifyIfConfigured(`⏰ *SLA ESTOURADO*\n\n🎫 Ticket #${ticket.id}: ${ticket.title}\n🖥️ ${screenName}\n📌 Status: ${ticket.status}\n⚠️ Atraso: ${formatHoursDuration(ageHours)} (SLA ${formatHoursDuration(slaHours)})${ticket.assignedTo ? `\n👤 Responsável: ${ticket.assignedTo}` : ''}`, severity);
+  }
+}
+
+async function processPreventiveSchedules() {
+  const ticketSince = new Date(Date.now() - PREVENTIVE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  const telemetrySince = new Date(Date.now() - PREVENTIVE_TELEMETRY_LOOKBACK_HOURS * 60 * 60 * 1000);
+  const screens = await Screen.findAll({ where: { status: { [Op.notIn]: ['static', 'not_installed'] } } });
+
+  for (const screen of screens) {
+    const recentTickets = await Ticket.findAll({
+      where: { screenId: screen.id, createdAt: { [Op.gte]: ticketSince } },
+      order: [['createdAt', 'DESC']]
+    });
+
+    const snapshots = await TelemetrySnapshot.findAll({
+      where: { screenId: screen.id, createdAt: { [Op.gte]: telemetrySince } },
+      order: [['createdAt', 'DESC']]
+    });
+
+    const reasons = [];
+    const categoryCounts = recentTickets.reduce((acc, ticket) => {
+      acc[ticket.category] = (acc[ticket.category] || 0) + 1;
+      return acc;
+    }, {});
+
+    if (recentTickets.length >= 3) {
+      reasons.push(`${recentTickets.length} tickets nos últimos ${PREVENTIVE_LOOKBACK_DAYS} dias`);
+    }
+
+    const recurringCategory = Object.entries(categoryCounts).find(([, count]) => count >= 2);
+    if (recurringCategory) {
+      reasons.push(`recorrência na categoria ${recurringCategory[0]}`);
+    }
+
+    if (snapshots.some((snapshot) => Number(snapshot.cpuTemp) >= 80)) {
+      reasons.push('temperatura crítica de player');
+    }
+    if (snapshots.some((snapshot) => Number(snapshot.diskPct) >= 85)) {
+      reasons.push('disco em nível crítico');
+    }
+    if (snapshots.some((snapshot) => Number(snapshot.cpuUsage) >= 90)) {
+      reasons.push('CPU sustentada em nível crítico');
+    }
+
+    if (!reasons.length) continue;
+
+    const existingSchedule = await Schedule.findOne({
+      where: {
+        screenId: screen.id,
+        status: { [Op.in]: ['scheduled', 'in_progress'] },
+        title: { [Op.like]: 'Preventiva automática%' }
+      }
+    });
+    if (existingSchedule) continue;
+
+    const scheduledDate = normalizeScheduleDate(new Date(Date.now() + (reasons.some((reason) => reason.includes('crítica')) ? 24 : 72) * 60 * 60 * 1000));
+    const description = `Gerado automaticamente pelo sistema com base em padrão operacional: ${reasons.join(', ')}.`;
+    const schedule = await Schedule.create({
+      screenId: screen.id,
+      title: `Preventiva automática - ${screen.name}`,
+      description,
+      scheduledDate,
+      assignedTo: null,
+      location: screen.address || screen.location || null,
+      city: null,
+      recurrence: 'none',
+      color: '#0ea5e9',
+      createdBy: 'system'
+    });
+
+    await createOperationalAlert({
+      screenId: screen.id,
+      title: `Preventiva criada para ${screen.name}`,
+      message: `Agendamento automático #${schedule.id} criado para ${scheduledDate}. Motivos: ${reasons.join(', ')}.`,
+      severity: 'warning'
+    });
+
+    await notifyIfConfigured(`🛠️ *PREVENTIVA AUTOMÁTICA*\n\n🖥️ ${screen.name}\n📍 ${screen.address || screen.location || 'Local não informado'}\n📆 ${new Date(`${scheduledDate}T12:00:00`).toLocaleDateString('pt-BR')}\n📌 Motivos: ${reasons.join(', ')}`, 'warning');
+  }
+}
+
+async function runOperationalAutomation() {
+  await processTicketSlaEscalations();
+  await processPreventiveSchedules();
 }
 
 async function bootstrapAdmin() {
@@ -1813,7 +2025,10 @@ app.get('/tickets', authenticateToken, async (req, res) => {
     if (req.query.assignedTo) where.assignedTo = req.query.assignedTo;
     if (req.query.screenId) where.screenId = req.query.screenId;
     const tickets = await Ticket.findAll({ where, include: [{ model: Screen, attributes: ['id', 'name', 'location', 'status'] }], order: [['createdAt', 'DESC']] });
-    res.json(tickets);
+    res.json(tickets.map((ticket) => {
+      const json = ticket.toJSON();
+      return { ...json, ...calculateTicketCost(json) };
+    }));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1821,13 +2036,14 @@ app.get('/tickets/:id', authenticateToken, async (req, res) => {
   try {
     const ticket = await Ticket.findByPk(req.params.id, { include: [{ model: Screen }] });
     if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
-    res.json(ticket);
+    const json = ticket.toJSON();
+    res.json({ ...json, ...calculateTicketCost(json) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/tickets', authenticateToken, async (req, res) => {
   try {
-    const { screenId, title, description, category, priority, assignedTo, location, city, checklist } = req.body;
+    const { screenId, title, description, category, priority, assignedTo, location, city, checklist, actualCost, timeSpentMinutes } = req.body;
     if (!title) return res.status(400).json({ error: 'Título é obrigatório' });
     
     // Auto-populate location from screen if not provided
@@ -1843,7 +2059,9 @@ app.post('/tickets', authenticateToken, async (req, res) => {
     const ticket = await Ticket.create({
       screenId: screenId || null, title, description, category: category || 'general',
       priority: priority || 'medium', assignedTo, location: finalLocation, city: finalCity, checklist,
-      createdBy: req.user.username, status: 'open'
+      createdBy: req.user.username, status: 'open',
+      actualCost: actualCost === '' || actualCost == null ? null : Number(actualCost),
+      timeSpentMinutes: timeSpentMinutes === '' || timeSpentMinutes == null ? 0 : Number(timeSpentMinutes)
     });
     await logAudit(req, 'create', 'ticket', ticket.id, { title });
     // Send notification on ticket create
@@ -1879,7 +2097,8 @@ app.post('/tickets', authenticateToken, async (req, res) => {
       }
       sendNotification(msg);
     }
-    res.status(201).json(ticket);
+    const json = ticket.toJSON();
+    res.status(201).json({ ...json, ...calculateTicketCost(json) });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
@@ -1887,7 +2106,7 @@ app.patch('/tickets/:id', authenticateToken, async (req, res) => {
   try {
     const ticket = await Ticket.findByPk(req.params.id);
     if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
-    const { status, priority, assignedTo, description, timeSpentMinutes, checklist, title, category } = req.body;
+    const { status, priority, assignedTo, description, timeSpentMinutes, checklist, title, category, actualCost } = req.body;
     const updates = {};
     if (status) {
       updates.status = status;
@@ -1898,12 +2117,15 @@ app.patch('/tickets/:id', authenticateToken, async (req, res) => {
     if (assignedTo !== undefined) updates.assignedTo = assignedTo;
     if (description !== undefined) updates.description = description;
     if (timeSpentMinutes !== undefined) updates.timeSpentMinutes = timeSpentMinutes;
+    if (actualCost !== undefined) updates.actualCost = actualCost === '' || actualCost == null ? null : Number(actualCost);
     if (checklist !== undefined) updates.checklist = checklist;
     if (title) updates.title = title;
     if (category) updates.category = category;
+    if (status && ['resolved', 'closed'].includes(status)) updates.slaEscalatedAt = ticket.slaEscalatedAt || new Date();
     await ticket.update(updates);
     await logAudit(req, 'update', 'ticket', ticket.id, updates);
-    res.json(ticket);
+    const json = ticket.toJSON();
+    res.json({ ...json, ...calculateTicketCost(json) });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
@@ -1920,23 +2142,86 @@ app.delete('/tickets/:id', authenticateToken, async (req, res) => {
 app.get('/tickets/stats/summary', authenticateToken, async (req, res) => {
   try {
     const all = await Ticket.findAll();
+    const enriched = all.map((ticket) => ({ ...ticket.toJSON(), ...calculateTicketCost(ticket) }));
     const stats = {
-      total: all.length,
-      open: all.filter(t => t.status === 'open').length,
-      in_progress: all.filter(t => t.status === 'in_progress').length,
-      waiting_part: all.filter(t => t.status === 'waiting_part').length,
-      resolved: all.filter(t => t.status === 'resolved').length,
-      closed: all.filter(t => t.status === 'closed').length,
-      avgTimeMinutes: all.filter(t => t.timeSpentMinutes > 0).reduce((a, t) => a + t.timeSpentMinutes, 0) / (all.filter(t => t.timeSpentMinutes > 0).length || 1),
+      total: enriched.length,
+      open: enriched.filter(t => t.status === 'open').length,
+      in_progress: enriched.filter(t => t.status === 'in_progress').length,
+      waiting_part: enriched.filter(t => t.status === 'waiting_part').length,
+      resolved: enriched.filter(t => t.status === 'resolved').length,
+      closed: enriched.filter(t => t.status === 'closed').length,
+      avgTimeMinutes: enriched.filter(t => t.timeSpentMinutes > 0).reduce((a, t) => a + t.timeSpentMinutes, 0) / (enriched.filter(t => t.timeSpentMinutes > 0).length || 1),
+      totalCost: enriched.reduce((acc, ticket) => acc + (ticket.totalCost || 0), 0),
+      avgCost: enriched.reduce((acc, ticket) => acc + (ticket.totalCost || 0), 0) / (enriched.length || 1),
       byCategory: {},
       byAssignee: {}
     };
-    all.forEach(t => {
+    enriched.forEach(t => {
       stats.byCategory[t.category] = (stats.byCategory[t.category] || 0) + 1;
       if (t.assignedTo) stats.byAssignee[t.assignedTo] = (stats.byAssignee[t.assignedTo] || 0) + 1;
     });
     res.json(stats);
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/screens/:id/maintenance-history', authenticateToken, async (req, res) => {
+  try {
+    const screen = await Screen.findByPk(req.params.id);
+    if (!screen) return res.status(404).json({ error: 'Screen not found' });
+
+    const [tickets, schedules, alerts] = await Promise.all([
+      Ticket.findAll({ where: { screenId: screen.id }, order: [['createdAt', 'DESC']], limit: 25 }),
+      Schedule.findAll({ where: { screenId: screen.id }, order: [['scheduledDate', 'DESC']], limit: 15 }),
+      Alert.findAll({ where: { screenId: screen.id }, order: [['createdAt', 'DESC']], limit: 15 })
+    ]);
+
+    const ticketItems = tickets.map((ticket) => {
+      const json = ticket.toJSON();
+      return { ...json, ...calculateTicketCost(json) };
+    });
+    const resolvedTickets = ticketItems.filter((ticket) => ticket.resolvedAt);
+    const avgResolutionHours = resolvedTickets.length
+      ? resolvedTickets.reduce((acc, ticket) => acc + ((new Date(ticket.resolvedAt) - new Date(ticket.createdAt)) / (1000 * 60 * 60)), 0) / resolvedTickets.length
+      : 0;
+    const categoryCounts = ticketItems.reduce((acc, ticket) => {
+      acc[ticket.category] = (acc[ticket.category] || 0) + 1;
+      return acc;
+    }, {});
+
+    const recommendations = [];
+    if (ticketItems.filter((ticket) => ['open', 'in_progress', 'waiting_part'].includes(ticket.status)).length > 0) {
+      recommendations.push('Existem tickets abertos nesta tela exigindo acompanhamento.');
+    }
+    if (schedules.some((schedule) => schedule.title.startsWith('Preventiva automática') && ['scheduled', 'in_progress'].includes(schedule.status))) {
+      recommendations.push('Há preventiva automática pendente para este ponto.');
+    }
+    if (alerts.some((alert) => !alert.dismissed && alert.severity === 'critical')) {
+      recommendations.push('Alertas críticos recentes indicam risco operacional elevado.');
+    }
+
+    res.json({
+      screenId: screen.id,
+      summary: {
+        totalTickets: ticketItems.length,
+        openTickets: ticketItems.filter((ticket) => ['open', 'in_progress', 'waiting_part'].includes(ticket.status)).length,
+        resolvedTickets: ticketItems.filter((ticket) => ['resolved', 'closed'].includes(ticket.status)).length,
+        preventiveSchedules: schedules.filter((schedule) => schedule.title.startsWith('Preventiva automática')).length,
+        totalTimeMinutes: ticketItems.reduce((acc, ticket) => acc + (ticket.timeSpentMinutes || 0), 0),
+        totalCost: Number(ticketItems.reduce((acc, ticket) => acc + (ticket.totalCost || 0), 0).toFixed(2)),
+        avgResolutionHours: Number(avgResolutionHours.toFixed(1)),
+        topCategories: Object.entries(categoryCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([category, count]) => ({ category, count })),
+        recommendations
+      },
+      tickets: ticketItems,
+      schedules,
+      alerts
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ===== SCHEDULES/CALENDAR CRUD =====
