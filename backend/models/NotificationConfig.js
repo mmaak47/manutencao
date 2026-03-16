@@ -18,8 +18,12 @@ const NotificationConfig = sequelize.define('NotificationConfig', {
   notifyOnOscillation: { type: DataTypes.BOOLEAN, defaultValue: true },
   // Technician contacts (JSON: [{ name, phone }])
   technicianContacts: { type: DataTypes.TEXT, allowNull: true, defaultValue: '[]' },
-  // Checkin location type rules (JSON: [{ keyword, type }])
-  checkinLocationTypes: { type: DataTypes.TEXT, allowNull: true }
+  // Legacy checkin rules (kept for backward compatibility)
+  checkinLocationTypes: { type: DataTypes.TEXT, allowNull: true },
+  // Snapshot list for checkin page (JSON: [{ locationKey, locationName, locationType, city, clients[] }])
+  checkinLocations: { type: DataTypes.TEXT, allowNull: true },
+  // ISO timestamp of the latest snapshot update
+  checkinLocationsUpdatedAt: { type: DataTypes.DATE, allowNull: true }
 }, { timestamps: true, tableName: 'notification_configs' });
 
 module.exports = NotificationConfig;

@@ -111,9 +111,8 @@ function App() {
   const [checkinChecked, setCheckinChecked] = useState({});
   const [checkinCityFilter, setCheckinCityFilter] = useState('all');
   const [checkinTypeFilter, setCheckinTypeFilter] = useState('all');
-  const [checkinRules, setCheckinRules] = useState([]);
-  const [showCheckinConfig, setShowCheckinConfig] = useState(false);
-  const [checkinRuleEdit, setCheckinRuleEdit] = useState([]);
+  const [showCheckinAddModal, setShowCheckinAddModal] = useState(false);
+  const [checkinNewLocation, setCheckinNewLocation] = useState({ locationName: '', locationType: '', city: '', clientsText: '' });
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(30);
@@ -462,7 +461,7 @@ function App() {
     if (activePage === 'analytics-pro') { fetchPatterns(); fetchTicketStats(); fetchLoopAudits(); }
     if (activePage === 'notifications') { fetchNotifConfig(); }
     if (activePage === 'approvals') { fetchPendingRegistrations(regStatusFilter); fetchAdminUsers(); fetchUsers(); }
-    if (activePage === 'checkin') { fetchCheckinReport(); if (currentUser?.role === 'admin') fetchCheckinConfig(); }
+    if (activePage === 'checkin') { fetchCheckinReport(); }
   }, [activePage, authToken, calendarMonth, calendarYear]);
 
   useEffect(() => {
@@ -610,41 +609,54 @@ function App() {
     }
   };
 
-  const syncCheckinClients = async () => {
+  const collectCheckinSnapshot = async () => {
     if (!authToken || checkinSyncing) return;
     setCheckinSyncing(true);
     try {
-      const res = await axios.post(`${API_BASE}/checkin/sync`, {}, authConfig);
-      setAppAlert({ open: true, message: res.data.message || 'Sincronização iniciada!', type: 'success' });
-      setTimeout(() => fetchCheckinReport(), 5000);
-      setTimeout(() => fetchCheckinReport(), 30000);
+      const res = await axios.post(`${API_BASE}/checkin/snapshot`, {}, authConfig);
+      setAppAlert({ open: true, message: res.data.message || 'Coleta concluída!', type: 'success' });
+      await fetchCheckinReport();
     } catch (err) {
-      setAppAlert({ open: true, message: 'Erro ao sincronizar clientes', type: 'error' });
+      const msg = err?.response?.data?.error || 'Erro ao coletar dados do origin';
+      setAppAlert({ open: true, message: msg, type: 'error' });
     } finally {
       setCheckinSyncing(false);
     }
   };
 
-  const fetchCheckinConfig = async () => {
-    if (!authToken) return;
+  const addCheckinLocation = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/checkin/config`, authConfig);
-      setCheckinRules(res.data.rules || []);
-      setCheckinRuleEdit(res.data.rules || []);
+      const clients = String(checkinNewLocation.clientsText || '')
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+      await axios.post(`${API_BASE}/checkin/locations`, {
+        locationName: checkinNewLocation.locationName,
+        locationType: checkinNewLocation.locationType,
+        city: checkinNewLocation.city,
+        clients
+      }, authConfig);
+
+      setShowCheckinAddModal(false);
+      setCheckinNewLocation({ locationName: '', locationType: '', city: '', clientsText: '' });
+      await fetchCheckinReport();
+      setAppAlert({ open: true, message: 'Local adicionado com sucesso', type: 'success' });
     } catch (err) {
-      console.error('Error fetching checkin config:', err);
+      const msg = err?.response?.data?.error || 'Erro ao adicionar local';
+      setAppAlert({ open: true, message: msg, type: 'error' });
     }
   };
 
-  const saveCheckinConfig = async () => {
+  const removeCheckinLocation = async (locationKey) => {
+    if (!window.confirm('Remover este local da lista de checkin?')) return;
     try {
-      await axios.put(`${API_BASE}/checkin/config`, { rules: checkinRuleEdit }, authConfig);
-      setCheckinRules(checkinRuleEdit);
-      setShowCheckinConfig(false);
-      fetchCheckinReport();
-      setAppAlert({ open: true, message: 'Configuração salva!', type: 'success' });
+      await axios.delete(`${API_BASE}/checkin/locations/${encodeURIComponent(locationKey)}`, authConfig);
+      await fetchCheckinReport();
+      setAppAlert({ open: true, message: 'Local removido', type: 'success' });
     } catch (err) {
-      setAppAlert({ open: true, message: 'Erro ao salvar configuração', type: 'error' });
+      const msg = err?.response?.data?.error || 'Erro ao remover local';
+      setAppAlert({ open: true, message: msg, type: 'error' });
     }
   };
 
@@ -3648,29 +3660,33 @@ function App() {
       </div>
       ) : activePage === 'checkin' ? (
       <div className="checkin-page">
-        {/* --- Header --- */}
         <div className="checkin-header no-print">
           <div className="checkin-title">
             <h3><FiCamera size={18} /> Checkin Fotográfico</h3>
-            <p>Marque os locais visitados e verifique os monitores.</p>
+            <p>Lista de locais por categoria. Coleta manual única e edição pelo administrador.</p>
           </div>
           <div className="checkin-header-actions">
-            <button className="btn-secondary" onClick={syncCheckinClients} disabled={checkinSyncing}>
-              <FiRefreshCw size={14} className={checkinSyncing ? 'spinning' : ''} />
-              {checkinSyncing ? 'Sincronizando...' : 'Sincronizar Clientes'}
-            </button>
             {currentUser?.role === 'admin' && (
-              <button className="btn-secondary" onClick={() => { setShowCheckinConfig(true); fetchCheckinConfig(); }}>
-                <FiSettings size={14} /> Tipos de Local
+              <button className="btn-secondary" onClick={collectCheckinSnapshot} disabled={checkinSyncing}>
+                <FiRefreshCw size={14} className={checkinSyncing ? 'spinning' : ''} />
+                {checkinSyncing ? 'Coletando...' : 'Coletar do Origin (1x)'}
               </button>
             )}
+            {currentUser?.role === 'admin' && (
+              <button className="btn-secondary" onClick={() => setShowCheckinAddModal(true)}>
+                <FiPlus size={14} /> Adicionar Local
+              </button>
+            )}
+            <button className="btn-secondary" onClick={fetchCheckinReport} disabled={checkinLoading}>
+              <FiRefreshCw size={14} className={checkinLoading ? 'spinning' : ''} />
+              Atualizar
+            </button>
             <button className="btn-primary" onClick={() => window.print()}>
               <FiPrinter size={14} /> Salvar PDF
             </button>
           </div>
         </div>
 
-        {/* --- Filters --- */}
         <div className="checkin-filters no-print">
           <select value={checkinCityFilter} onChange={e => setCheckinCityFilter(e.target.value)}>
             <option value="all">Todas as cidades</option>
@@ -3680,18 +3696,13 @@ function App() {
             <option value="all">Todos os tipos</option>
             {(checkinData?.types || []).map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          <button className="btn-secondary" onClick={fetchCheckinReport} disabled={checkinLoading}>
-            <FiRefreshCw size={13} className={checkinLoading ? 'spinning' : ''} /> Atualizar
-          </button>
         </div>
 
-        {/* --- Print header (only visible on print) --- */}
         <div className="checkin-print-header print-only">
           <h2>Checkin Fotográfico</h2>
           <p>Data: {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
         </div>
 
-        {/* --- Content --- */}
         {checkinLoading ? (
           <div className="checkin-loading"><FiRefreshCw size={24} className="spinning" /> Carregando...</div>
         ) : !checkinData ? (
@@ -3704,10 +3715,9 @@ function App() {
           });
 
           if (filtered.length === 0) return (
-            <div className="checkin-empty"><FiSearch size={32} /><p>Nenhum local para os filtros selecionados.</p></div>
+            <div className="checkin-empty"><FiSearch size={32} /><p>Nenhum local para os filtros selecionados. Use "Coletar do Origin (1x)" para montar a lista inicial.</p></div>
           );
 
-          // Group by locationType
           const byType = {};
           for (const loc of filtered) {
             if (!byType[loc.locationType]) byType[loc.locationType] = [];
@@ -3720,113 +3730,111 @@ function App() {
                 <span className="checkin-type-badge">{typeName}</span>
                 <span className="checkin-type-count">{locs.length} local(is)</span>
               </div>
-              <div className="checkin-locations-grid">
-                {locs.map(loc => {
-                  const state = checkinChecked[loc.locationName] || {};
-                  const isChecked = !!state.checked;
-                  const allClients = [...new Set(loc.screens.flatMap(s => s.clients || []))];
-                  const anyOffline = loc.screens.some(s => s.status === 'offline');
-                  const anyOscillating = loc.screens.some(s => s.status === 'oscillating');
-                  return (
-                    <div key={loc.locationName} className={`checkin-location-card${isChecked ? ' checked' : ''}${anyOffline ? ' has-offline' : ''}`}>
-                      <div className="checkin-location-top">
-                        <label className="checkin-checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={e => setCheckinChecked(prev => ({
-                              ...prev,
-                              [loc.locationName]: {
-                                checked: e.target.checked,
-                                checkedAt: e.target.checked ? new Date().toISOString() : null
-                              }
-                            }))}
-                          />
-                          <span className="checkin-location-name">{loc.locationName}</span>
-                        </label>
-                        {loc.city && <span className="checkin-city-tag">{loc.city}</span>}
-                      </div>
+              <div className="checkin-list-wrapper">
+                <table className="checkin-list-table">
+                  <thead>
+                    <tr>
+                      <th>OK</th>
+                      <th>Local</th>
+                      <th>Cidade</th>
+                      <th>Categoria</th>
+                      <th>Clientes</th>
+                      {currentUser?.role === 'admin' && <th className="no-print">Ações</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {locs.map((loc) => {
+                      const state = checkinChecked[loc.locationKey] || {};
+                      const isChecked = !!state.checked;
+                      const clients = Array.isArray(loc.clients) ? loc.clients : [];
 
-                      {isChecked && state.checkedAt && (
-                        <div className="checkin-checked-at">
-                          ✓ Visitado às {new Date(state.checkedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      )}
-
-                      {allClients.length > 0 && (
-                        <div className="checkin-clients">
-                          <span className="checkin-clients-label">Clientes:</span>
-                          {allClients.map(c => <span key={c} className="checkin-client-tag">{c}</span>)}
-                        </div>
-                      )}
-
-                      <div className="checkin-screens">
-                        {loc.screens.map(s => (
-                          <span key={s.id} className={`checkin-screen-pill status-${s.status || 'unknown'}`} title={s.name}>
-                            {s.status === 'online' ? '●' : s.status === 'offline' ? '○' : '◑'} {s.name}
-                          </span>
-                        ))}
-                      </div>
-
-                      {(anyOffline || anyOscillating) && (
-                        <div className="checkin-alert-row">
-                          {anyOffline && <span className="checkin-alert offline">⚠ Monitor offline</span>}
-                          {anyOscillating && <span className="checkin-alert oscillating">⚡ Oscilando</span>}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                      return (
+                        <tr key={loc.locationKey} className={isChecked ? 'checked' : ''}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => setCheckinChecked((prev) => ({
+                                ...prev,
+                                [loc.locationKey]: {
+                                  checked: e.target.checked,
+                                  checkedAt: e.target.checked ? new Date().toISOString() : null
+                                }
+                              }))}
+                            />
+                          </td>
+                          <td>
+                            <div className="checkin-list-name">{loc.locationName}</div>
+                            {isChecked && state.checkedAt && (
+                              <div className="checkin-list-checked-at">Visitado às {new Date(state.checkedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                            )}
+                          </td>
+                          <td>{loc.city || '-'}</td>
+                          <td>{loc.locationType || '-'}</td>
+                          <td>
+                            {clients.length > 0 ? (
+                              <div className="checkin-clients">
+                                {clients.map((c) => <span key={c} className="checkin-client-tag">{c}</span>)}
+                              </div>
+                            ) : '-'}
+                          </td>
+                          {currentUser?.role === 'admin' && (
+                            <td className="no-print">
+                              <button className="btn-icon" title="Remover local" onClick={() => removeCheckinLocation(loc.locationKey)}>
+                                <FiTrash2 size={14} />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           ));
         })()}
 
-        {/* --- Summary footer (print) --- */}
         <div className="checkin-summary print-only">
           <p>Total visitados: {Object.values(checkinChecked).filter(s => s.checked).length} / {(checkinData?.locations || []).length}</p>
         </div>
 
-        {/* --- Config modal (admin) --- */}
-        {showCheckinConfig && (
-          <div className="modal-overlay" onClick={() => setShowCheckinConfig(false)}>
+        {showCheckinAddModal && (
+          <div className="modal-overlay" onClick={() => setShowCheckinAddModal(false)}>
             <div className="modal-content" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
-                <h2>Tipos de Local</h2>
-                <button className="modal-close" onClick={() => setShowCheckinConfig(false)}>×</button>
+                <h2>Adicionar Local</h2>
+                <button className="modal-close" onClick={() => setShowCheckinAddModal(false)}>×</button>
               </div>
-              <p style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
-                Configure as regras de classificação. A primeira regra que coincidir com o nome do local será usada.
-              </p>
-              <div className="checkin-rules-list">
-                {checkinRuleEdit.map((rule, i) => (
-                  <div key={i} className="checkin-rule-row">
-                    <input
-                      type="text"
-                      placeholder="Palavra-chave"
-                      value={rule.keyword}
-                      onChange={e => setCheckinRuleEdit(prev => prev.map((r, j) => j === i ? { ...r, keyword: e.target.value } : r))}
-                    />
-                    <span>→</span>
-                    <input
-                      type="text"
-                      placeholder="Tipo"
-                      value={rule.type}
-                      onChange={e => setCheckinRuleEdit(prev => prev.map((r, j) => j === i ? { ...r, type: e.target.value } : r))}
-                    />
-                    <button className="btn-icon" onClick={() => setCheckinRuleEdit(prev => prev.filter((_, j) => j !== i))}>
-                      <FiTrash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+              <div className="checkin-add-form">
+                <input
+                  type="text"
+                  placeholder="Nome do local"
+                  value={checkinNewLocation.locationName}
+                  onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, locationName: e.target.value }))}
+                />
+                <input
+                  type="text"
+                  placeholder="Categoria (ex: Elevadores, Painéis LED)"
+                  value={checkinNewLocation.locationType}
+                  onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, locationType: e.target.value }))}
+                />
+                <input
+                  type="text"
+                  placeholder="Cidade"
+                  value={checkinNewLocation.city}
+                  onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, city: e.target.value }))}
+                />
+                <textarea
+                  rows="3"
+                  placeholder="Clientes separados por vírgula"
+                  value={checkinNewLocation.clientsText}
+                  onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, clientsText: e.target.value }))}
+                />
               </div>
-              <button className="btn-secondary" style={{ marginTop: 10 }}
-                onClick={() => setCheckinRuleEdit(prev => [...prev, { keyword: '', type: '' }])}>
-                <FiPlus size={13} /> Adicionar regra
-              </button>
               <div className="modal-footer">
-                <button className="btn-secondary" onClick={() => setShowCheckinConfig(false)}>Cancelar</button>
-                <button className="btn-primary" onClick={saveCheckinConfig}>Salvar</button>
+                <button className="btn-secondary" onClick={() => setShowCheckinAddModal(false)}>Cancelar</button>
+                <button className="btn-primary" onClick={addCheckinLocation}>Salvar Local</button>
               </div>
             </div>
           </div>

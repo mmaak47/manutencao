@@ -4115,6 +4115,72 @@
   color: var(--text-secondary);
 }
 
+.checkin-list-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.checkin-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.checkin-list-table th,
+.checkin-list-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+  font-size: 13px;
+}
+
+.checkin-list-table thead th {
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  background: var(--bg-primary);
+}
+
+.checkin-list-table tbody tr.checked {
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.checkin-list-table tbody tr:hover {
+  background: rgba(148, 163, 184, 0.07);
+}
+
+.checkin-list-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.checkin-list-checked-at {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--success-color, #16a34a);
+}
+
+.checkin-add-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.checkin-add-form input,
+.checkin-add-form textarea {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
 .checkin-locations-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -4333,21 +4399,24 @@
     max-width: 100% !important;
   }
 
-  .checkin-locations-grid {
-    grid-template-columns: repeat(3, 1fr) !important;
-    gap: 8px !important;
-  }
-
-  .checkin-location-card {
-    border: 1px solid #ccc !important;
+  .checkin-list-wrapper {
+    border: 1px solid #d1d5db !important;
     background: #fff !important;
-    break-inside: avoid;
-    page-break-inside: avoid;
   }
 
-  .checkin-location-card.checked {
-    background: #f0fff4 !important;
-    border-color: #16a34a !important;
+  .checkin-list-table,
+  .checkin-list-table th,
+  .checkin-list-table td {
+    border-color: #d1d5db !important;
+    color: #111827 !important;
+  }
+
+  .checkin-list-table thead th {
+    background: #f3f4f6 !important;
+  }
+
+  .checkin-list-table tbody tr.checked {
+    background: #ecfdf5 !important;
   }
 
   .checkin-type-badge {
@@ -4359,8 +4428,10 @@
     color: #1e40af !important;
   }
 
-  .checkin-screen-pill.status-online { background: #dcfce7 !important; color: #166534 !important; }
-  .checkin-screen-pill.status-offline { background: #fee2e2 !important; color: #991b1b !important; }
+  .checkin-list-table td.no-print,
+  .checkin-list-table th.no-print {
+    display: none !important;
+  }
 }
 
 /* print-only elements are hidden on screen */

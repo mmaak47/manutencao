@@ -761,6 +761,18 @@ async function ensureNotificationConfigColumns() {
         allowNull: true
       });
     }
+    if (!tableDefinition.checkinLocations) {
+      await queryInterface.addColumn('notification_configs', 'checkinLocations', {
+        type: DataTypes.TEXT,
+        allowNull: true
+      });
+    }
+    if (!tableDefinition.checkinLocationsUpdatedAt) {
+      await queryInterface.addColumn('notification_configs', 'checkinLocationsUpdatedAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      });
+    }
   } catch (err) {
     console.error('Failed to ensure notification_configs columns:', err.message);
   }
@@ -3531,127 +3543,297 @@ async function scrapeCheckinClients(originId) {
   }
 }
 
-// Default location type classification rules
-const DEFAULT_LOCATION_TYPE_RULES = [
-  { keyword: 'Posto', type: 'Painéis de LED - Postos' },
-  { keyword: 'Garden', type: 'Elevadores' },
-  { keyword: 'Palhano', type: 'Elevadores' },
-  { keyword: 'Tower', type: 'Elevadores' },
-  { keyword: 'Elevador', type: 'Elevadores' },
-  { keyword: 'Shopping', type: 'Painéis de LED - Shopping' }
-];
-
-let checkinLocationTypeRules = null; // loaded from NotificationConfig on first use
-
-async function getCheckinLocationTypeRules() {
-  if (checkinLocationTypeRules !== null) return checkinLocationTypeRules;
+function parseJsonArray(value) {
   try {
-    const cfg = await NotificationConfig.findOne();
-    if (cfg && cfg.checkinLocationTypes) {
-      checkinLocationTypeRules = JSON.parse(cfg.checkinLocationTypes);
-      return checkinLocationTypeRules;
-    }
-  } catch (_) {}
-  checkinLocationTypeRules = DEFAULT_LOCATION_TYPE_RULES;
-  return checkinLocationTypeRules;
-}
-
-function classifyLocationType(locationName, rules) {
-  if (!locationName) return 'Outros';
-  const name = String(locationName).toLowerCase();
-  for (const rule of (rules || [])) {
-    if (name.includes(String(rule.keyword || '').toLowerCase())) return rule.type;
+    const parsed = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
   }
-  return 'Outros';
 }
 
-// GET /checkin/report — structured location checklist with clients (from cache)
+function normalizeLocationKey(locationName, locationType, city) {
+  const raw = `${locationName || ''}|${locationType || ''}|${city || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9|]+/g, '-')
+    .replace(/-+/g, '-');
+  return raw.slice(0, 180);
+}
+
+function normalizeClientList(clients) {
+  if (!Array.isArray(clients)) return [];
+  const set = new Set();
+  for (const c of clients) {
+    const name = String(c || '').trim();
+    if (name && name.length <= 120) set.add(name);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
+function extractCityFromAddress(address) {
+  const raw = String(address || '').trim();
+  if (!raw) return '';
+
+  const cityUfMatch = raw.match(/,\s*([^,\/]+)\s*\/\s*[A-Z]{2}\b/i);
+  if (cityUfMatch) return cityUfMatch[1].trim();
+
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) return parts[parts.length - 2];
+  return parts[0] || '';
+}
+
+function isStaticLocation(locationName, locationType) {
+  const text = `${locationName || ''} ${locationType || ''}`.toUpperCase();
+  return text.includes('FRONTLIGHT') || text.includes('BACKLIGHT');
+}
+
+function normalizeCheckinLocations(locations) {
+  const merged = new Map();
+  for (const loc of (Array.isArray(locations) ? locations : [])) {
+    const locationName = String(loc?.locationName || '').trim();
+    const locationType = String(loc?.locationType || 'Sem categoria').trim() || 'Sem categoria';
+    const city = String(loc?.city || '').trim();
+    if (!locationName) continue;
+    if (isStaticLocation(locationName, locationType)) continue;
+
+    const locationKey = String(loc?.locationKey || normalizeLocationKey(locationName, locationType, city));
+    const clients = normalizeClientList(loc?.clients || []);
+
+    if (!merged.has(locationKey)) {
+      merged.set(locationKey, { locationKey, locationName, locationType, city, clients });
+      continue;
+    }
+
+    const existing = merged.get(locationKey);
+    existing.clients = normalizeClientList([...(existing.clients || []), ...clients]);
+  }
+
+  return [...merged.values()].sort((a, b) => {
+    const typeCmp = a.locationType.localeCompare(b.locationType, 'pt-BR');
+    if (typeCmp !== 0) return typeCmp;
+    return a.locationName.localeCompare(b.locationName, 'pt-BR');
+  });
+}
+
+async function getOrCreateNotificationConfig() {
+  let cfg = await NotificationConfig.findOne();
+  if (!cfg) cfg = await NotificationConfig.create({});
+  return cfg;
+}
+
+async function loadStoredCheckinLocations() {
+  const cfg = await getOrCreateNotificationConfig();
+  const locations = normalizeCheckinLocations(parseJsonArray(cfg.checkinLocations));
+  return { cfg, locations, updatedAt: cfg.checkinLocationsUpdatedAt || null };
+}
+
+async function saveStoredCheckinLocations(cfg, locations) {
+  const normalized = normalizeCheckinLocations(locations);
+  const updatedAt = new Date();
+  await cfg.update({
+    checkinLocations: JSON.stringify(normalized),
+    checkinLocationsUpdatedAt: updatedAt
+  });
+  return { locations: normalized, updatedAt };
+}
+
+function parseSelectedOptionText(html, fieldName) {
+  const source = String(html || '');
+  const selectMatch = source.match(new RegExp(`<select[^>]*name=["']${fieldName}["'][^>]*>([\\s\\S]*?)<\\/select>`, 'i'));
+  if (!selectMatch) return '';
+  const selectBody = selectMatch[1];
+
+  const selected = selectBody.match(/<option[^>]*selected[^>]*>([\s\S]*?)<\/option>/i);
+  if (selected) {
+    return selected[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+  }
+
+  const firstOption = selectBody.match(/<option[^>]*>([\s\S]*?)<\/option>/i);
+  if (firstOption) {
+    return firstOption[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+  }
+
+  return '';
+}
+
+async function scrapeOriginMonitorType(originId) {
+  if (!originId || isOriginScrapeExcluded(originId)) return '';
+  const url = `${ORIGIN_BASE}/locais/adicionar-monitor/id/${originId}`;
+  try {
+    let resp = await axios.get(url, {
+      headers: { Cookie: originCookies },
+      timeout: 15000,
+      httpsAgent: originHttpsAgent,
+      validateStatus: () => true
+    });
+
+    if (!resp.data || String(resp.data).includes('action="/login/verifica"')) {
+      const ok = await originLogin();
+      if (!ok) return '';
+      resp = await axios.get(url, {
+        headers: { Cookie: originCookies },
+        timeout: 15000,
+        httpsAgent: originHttpsAgent,
+        validateStatus: () => true
+      });
+    }
+
+    if (resp.status !== 200 || !resp.data) return '';
+    return parseSelectedOptionText(resp.data, 'tipo_tela');
+  } catch (err) {
+    console.warn(`checkin type scrape [${originId}]: ${err.message}`);
+    return '';
+  }
+}
+
+// GET /checkin/report — returns persisted list (no automatic scraping)
 app.get('/checkin/report', authenticateToken, async (req, res) => {
   try {
-    const rules = await getCheckinLocationTypeRules();
-    const screens = await Screen.findAll({
-      where: { originId: { [Op.not]: null } },
-      attributes: ['id', 'name', 'location', 'address', 'status', 'originId'],
-      order: [['location', 'ASC'], ['name', 'ASC']]
+    const { locations, updatedAt } = await loadStoredCheckinLocations();
+    const cities = [...new Set(locations.map((l) => l.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const types = [...new Set(locations.map((l) => l.locationType).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    res.json({
+      locations,
+      cities,
+      types,
+      updatedAt,
+      total: locations.length,
+      mode: 'snapshot'
     });
-
-    // Group by location
-    const byLocation = {};
-    for (const s of screens) {
-      const locName = (s.location || 'Sem Local').trim();
-      if (!byLocation[locName]) byLocation[locName] = [];
-      byLocation[locName].push(s);
-    }
-
-    const locations = Object.entries(byLocation).map(([locationName, locScreens]) => {
-      const city = locScreens[0]?.address || '';
-      const locationType = classifyLocationType(locationName, rules);
-      const screensOut = locScreens.map(s => {
-        const cached = checkinClientsCache[s.originId];
-        return {
-          id: s.id,
-          name: s.name,
-          originId: s.originId,
-          status: s.status,
-          clients: cached ? cached.clients : [],
-          clientsUpdatedAt: cached ? cached.updatedAt : null
-        };
-      });
-      return { locationName, locationType, city, screens: screensOut };
-    });
-
-    const cities = [...new Set(locations.map(l => l.city).filter(Boolean))].sort();
-    const types = [...new Set(locations.map(l => l.locationType))].sort();
-
-    res.json({ locations, cities, types, rules });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /checkin/sync — scrape clients for all monitors (admin + technician)
-app.post('/checkin/sync', authenticateToken, async (req, res) => {
+// POST /checkin/snapshot — one-time collection from origin (admin)
+app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const screens = await Screen.findAll({
       where: { originId: { [Op.not]: null } },
-      attributes: ['id', 'originId', 'name']
+      attributes: ['id', 'name', 'location', 'address', 'originId'],
+      order: [['location', 'ASC'], ['name', 'ASC']]
     });
 
-    // Return immediately, scrape async
-    res.json({ success: true, message: `Sincronizando ${screens.length} monitores em background...`, total: screens.length });
-
-    let done = 0;
+    const grouped = new Map();
     for (const s of screens) {
-      const clients = await scrapeCheckinClients(s.originId);
-      checkinClientsCache[s.originId] = { clients, updatedAt: new Date().toISOString() };
-      done++;
-      if (done % 10 === 0) console.log(`checkin sync: ${done}/${screens.length}`);
+      if (isStaticMedia(s)) continue;
+      const locationName = String(s.location || '').trim();
+      if (!locationName) continue;
+      if (!grouped.has(locationName)) grouped.set(locationName, []);
+      grouped.get(locationName).push(s);
     }
-    console.log(`checkin sync complete: ${done} monitores, cache updated`);
+
+    const typeCache = new Map();
+    const locations = [];
+
+    for (const [locationName, locScreens] of grouped.entries()) {
+      const primary = locScreens[0];
+      const city = extractCityFromAddress(primary?.address);
+
+      let locationType = '';
+      if (primary?.originId) {
+        if (!typeCache.has(primary.originId)) {
+          typeCache.set(primary.originId, await scrapeOriginMonitorType(primary.originId));
+        }
+        locationType = typeCache.get(primary.originId) || '';
+      }
+
+      locationType = String(locationType || 'Sem categoria').trim() || 'Sem categoria';
+      if (isStaticLocation(locationName, locationType)) continue;
+
+      const clientsSet = new Set();
+      const sampleScreens = locScreens.slice(0, 6);
+      for (const s of sampleScreens) {
+        const clients = await scrapeCheckinClients(s.originId);
+        checkinClientsCache[s.originId] = { clients, updatedAt: new Date().toISOString() };
+        for (const c of clients) clientsSet.add(c);
+      }
+
+      locations.push({
+        locationKey: normalizeLocationKey(locationName, locationType, city),
+        locationName,
+        locationType,
+        city,
+        clients: normalizeClientList([...clientsSet])
+      });
+    }
+
+    const cfg = await getOrCreateNotificationConfig();
+    const saved = await saveStoredCheckinLocations(cfg, locations);
+
+    res.json({
+      success: true,
+      message: `Snapshot concluído com ${saved.locations.length} locais`,
+      total: saved.locations.length,
+      updatedAt: saved.updatedAt,
+      locations: saved.locations
+    });
   } catch (err) {
-    console.error('checkin sync error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// GET /checkin/config — returns location type rules (admin)
-app.get('/checkin/config', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const rules = await getCheckinLocationTypeRules();
-    res.json({ rules });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+// Backward compatibility: old sync endpoint now points to snapshot behavior
+app.post('/checkin/sync', authenticateToken, requireAdmin, async (req, res) => {
+  req.url = '/checkin/snapshot';
+  req.path = '/checkin/snapshot';
+  return res.status(410).json({
+    error: 'Endpoint legado. Use POST /checkin/snapshot para coletar dados uma vez.'
+  });
 });
 
-// PUT /checkin/config — save location type rules (admin)
-app.put('/checkin/config', authenticateToken, requireAdmin, async (req, res) => {
+// POST /checkin/locations — manually add a location (admin)
+app.post('/checkin/locations', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const rules = req.body.rules;
-    if (!Array.isArray(rules)) return res.status(400).json({ error: 'rules deve ser um array' });
-    let cfg = await NotificationConfig.findOne();
-    if (!cfg) cfg = await NotificationConfig.create({});
-    await cfg.update({ checkinLocationTypes: JSON.stringify(rules) });
-    checkinLocationTypeRules = rules; // update in-memory
-    res.json({ success: true, rules });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    const locationName = String(req.body?.locationName || '').trim();
+    const locationType = String(req.body?.locationType || '').trim() || 'Sem categoria';
+    const city = String(req.body?.city || '').trim();
+    const clients = normalizeClientList(req.body?.clients || []);
+
+    if (!locationName) {
+      return res.status(400).json({ error: 'locationName é obrigatório' });
+    }
+    if (isStaticLocation(locationName, locationType)) {
+      return res.status(400).json({ error: 'Frontlight/Backlight não devem entrar no checkin' });
+    }
+
+    const { cfg, locations } = await loadStoredCheckinLocations();
+    const locationKey = normalizeLocationKey(locationName, locationType, city);
+    const exists = locations.some((l) => l.locationKey === locationKey);
+    if (exists) {
+      return res.status(409).json({ error: 'Local já existe na lista' });
+    }
+
+    const saved = await saveStoredCheckinLocations(cfg, [
+      ...locations,
+      { locationKey, locationName, locationType, city, clients }
+    ]);
+
+    res.json({ success: true, locations: saved.locations, updatedAt: saved.updatedAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /checkin/locations/:locationKey — remove location from list (admin)
+app.delete('/checkin/locations/:locationKey', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const locationKey = String(req.params.locationKey || '').trim();
+    if (!locationKey) return res.status(400).json({ error: 'locationKey é obrigatório' });
+
+    const { cfg, locations } = await loadStoredCheckinLocations();
+    const next = locations.filter((l) => l.locationKey !== locationKey);
+    if (next.length === locations.length) {
+      return res.status(404).json({ error: 'Local não encontrado' });
+    }
+
+    const saved = await saveStoredCheckinLocations(cfg, next);
+    res.json({ success: true, locations: saved.locations, updatedAt: saved.updatedAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 
