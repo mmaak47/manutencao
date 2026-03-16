@@ -108,6 +108,7 @@ function App() {
   const [checkinData, setCheckinData] = useState(null);
   const [checkinLoading, setCheckinLoading] = useState(false);
   const [checkinSyncing, setCheckinSyncing] = useState(false);
+  const [checkinSnapshotStatus, setCheckinSnapshotStatus] = useState(null);
   const [checkinChecked, setCheckinChecked] = useState({});
   const [checkinCityFilter, setCheckinCityFilter] = useState('all');
   const [checkinTypeFilter, setCheckinTypeFilter] = useState('all');
@@ -462,7 +463,7 @@ function App() {
     if (activePage === 'analytics-pro') { fetchPatterns(); fetchTicketStats(); fetchLoopAudits(); }
     if (activePage === 'notifications') { fetchNotifConfig(); }
     if (activePage === 'approvals') { fetchPendingRegistrations(regStatusFilter); fetchAdminUsers(); fetchUsers(); }
-    if (activePage === 'checkin') { fetchCheckinReport(); }
+    if (activePage === 'checkin') { fetchCheckinReport(); fetchCheckinSnapshotStatus(); }
   }, [activePage, authToken, calendarMonth, calendarYear]);
 
   useEffect(() => {
@@ -610,21 +611,50 @@ function App() {
     }
   };
 
+  const fetchCheckinSnapshotStatus = async () => {
+    if (!authToken || currentUser?.role !== 'admin') return null;
+    try {
+      const res = await axios.get(`${API_BASE}/checkin/snapshot/status`, authConfig);
+      setCheckinSnapshotStatus(res.data);
+      setCheckinSyncing(!!res.data?.running);
+      return res.data;
+    } catch (err) {
+      console.error('Error fetching checkin snapshot status:', err);
+      return null;
+    }
+  };
+
   const collectCheckinSnapshot = async () => {
     if (!authToken || checkinSyncing) return;
     setCheckinSyncing(true);
     try {
-      const res = await axios.post(`${API_BASE}/checkin/snapshot`, {}, {
-        ...authConfig,
-        timeout: 240000
-      });
-      setAppAlert({ open: true, message: res.data.message || 'Coleta concluída!', type: 'success' });
+      await axios.post(`${API_BASE}/checkin/snapshot`, {}, authConfig);
+
+      let completed = null;
+      for (let attempt = 0; attempt < 240; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const status = await fetchCheckinSnapshotStatus();
+        if (!status) continue;
+        if (!status.running) {
+          completed = status;
+          break;
+        }
+      }
+
+      if (!completed) {
+        setAppAlert({ open: true, message: 'A coleta segue em processamento. Atualize a página em alguns instantes para consultar o resultado.', type: 'info' });
+        return;
+      }
+
+      if (completed.error) {
+        setAppAlert({ open: true, message: completed.error || 'Erro ao coletar dados do origin', type: 'error' });
+        return;
+      }
+
+      setAppAlert({ open: true, message: completed.message || 'Coleta concluída!', type: 'success' });
       await fetchCheckinReport();
     } catch (err) {
-      const timeout = err?.code === 'ECONNABORTED';
-      const msg = timeout
-        ? 'A coleta demorou demais e foi interrompida. Tente novamente; agora está otimizada.'
-        : (err?.response?.data?.error || 'Erro ao coletar dados do origin');
+      const msg = err?.response?.data?.error || 'Erro ao iniciar coleta do origin';
       setAppAlert({ open: true, message: msg, type: 'error' });
     } finally {
       setCheckinSyncing(false);
@@ -3697,7 +3727,9 @@ function App() {
             {currentUser?.role === 'admin' && (
               <button className="btn-secondary" onClick={collectCheckinSnapshot} disabled={checkinSyncing}>
                 <FiRefreshCw size={14} className={checkinSyncing ? 'spinning' : ''} />
-                {checkinSyncing ? 'Coletando...' : 'Coletar do Origin (1x)'}
+                {checkinSyncing
+                  ? `Coletando${checkinSnapshotStatus?.totalLocations ? ` ${checkinSnapshotStatus.processedLocations || 0}/${checkinSnapshotStatus.totalLocations}` : '...'}`
+                  : 'Coletar do Origin (1x)'}
               </button>
             )}
             {currentUser?.role === 'admin' && (

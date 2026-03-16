@@ -3850,27 +3850,34 @@ async function scrapeOriginMonitorType(originId) {
   }
 }
 
-// GET /checkin/report — returns persisted list (no automatic scraping)
-app.get('/checkin/report', authenticateToken, async (req, res) => {
-  try {
-    const { locations, updatedAt } = await loadStoredCheckinLocations();
-    const cities = [...new Set(locations.map((l) => l.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
-    const types = [...new Set(locations.map((l) => l.locationType).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
-    res.json({
-      locations,
-      cities,
-      types,
-      updatedAt,
-      total: locations.length,
-      mode: 'snapshot'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+const checkinSnapshotJob = {
+  running: false,
+  startedAt: null,
+  finishedAt: null,
+  processedLocations: 0,
+  totalLocations: 0,
+  currentLocation: '',
+  error: '',
+  message: '',
+  updatedAt: null,
+  total: 0
+};
 
-// POST /checkin/snapshot — one-time collection from origin (admin)
-app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) => {
+function getCheckinSnapshotStatus() {
+  return { ...checkinSnapshotJob };
+}
+
+async function executeCheckinSnapshotJob() {
+  checkinSnapshotJob.running = true;
+  checkinSnapshotJob.startedAt = new Date().toISOString();
+  checkinSnapshotJob.finishedAt = null;
+  checkinSnapshotJob.processedLocations = 0;
+  checkinSnapshotJob.totalLocations = 0;
+  checkinSnapshotJob.currentLocation = '';
+  checkinSnapshotJob.error = '';
+  checkinSnapshotJob.message = 'Iniciando coleta do Origin...';
+  checkinSnapshotJob.updatedAt = null;
+
   try {
     const screens = await Screen.findAll({
       where: { originId: { [Op.not]: null } },
@@ -3887,10 +3894,16 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
       grouped.get(locationName).push(s);
     }
 
+    checkinSnapshotJob.totalLocations = grouped.size;
+    checkinSnapshotJob.message = `Coletando ${grouped.size} local(is)...`;
+
     const typeCache = new Map();
     const locations = [];
 
     for (const [locationName, locScreens] of grouped.entries()) {
+      checkinSnapshotJob.currentLocation = locationName;
+      checkinSnapshotJob.message = `Coletando ${checkinSnapshotJob.processedLocations + 1}/${grouped.size}: ${locationName}`;
+
       const primary = locScreens[0];
       const city = extractCityFromAddress(primary?.address);
       const hoursSource = locScreens.find((s) => s.operatingHoursStart || s.operatingHoursEnd || s.operatingDays) || primary;
@@ -3904,8 +3917,11 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
         locationType = typeCache.get(primary.originId) || '';
       }
 
-        locationType = normalizeLocationType(locationType);
-      if (isStaticLocation(locationName, locationType)) continue;
+      locationType = normalizeLocationType(locationType);
+      if (isStaticLocation(locationName, locationType)) {
+        checkinSnapshotJob.processedLocations += 1;
+        continue;
+      }
 
       const clientsSet = new Set();
       const uniqueOriginScreens = [];
@@ -3937,18 +3953,64 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
         operatingHours,
         clients: normalizeClientList([...clientsSet])
       });
+
+      checkinSnapshotJob.processedLocations += 1;
     }
 
     const cfg = await getOrCreateNotificationConfig();
     const saved = await saveStoredCheckinLocations(cfg, locations);
 
+    checkinSnapshotJob.updatedAt = saved.updatedAt;
+    checkinSnapshotJob.total = saved.locations.length;
+    checkinSnapshotJob.message = `Snapshot concluído com ${saved.locations.length} locais`;
+  } catch (err) {
+    checkinSnapshotJob.error = err.message;
+    checkinSnapshotJob.message = err.message;
+  } finally {
+    checkinSnapshotJob.running = false;
+    checkinSnapshotJob.finishedAt = new Date().toISOString();
+    checkinSnapshotJob.currentLocation = '';
+  }
+}
+
+// GET /checkin/report — returns persisted list (no automatic scraping)
+app.get('/checkin/report', authenticateToken, async (req, res) => {
+  try {
+    const { locations, updatedAt } = await loadStoredCheckinLocations();
+    const cities = [...new Set(locations.map((l) => l.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const types = [...new Set(locations.map((l) => l.locationType).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
     res.json({
-      success: true,
-      message: `Snapshot concluído com ${saved.locations.length} locais`,
-      total: saved.locations.length,
-      updatedAt: saved.updatedAt,
-      locations: saved.locations
+      locations,
+      cities,
+      types,
+      updatedAt,
+      total: locations.length,
+      mode: 'snapshot'
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /checkin/snapshot/status — background collection status
+app.get('/checkin/snapshot/status', authenticateToken, requireAdmin, async (req, res) => {
+  res.json(getCheckinSnapshotStatus());
+});
+
+// POST /checkin/snapshot — one-time collection from origin (admin)
+app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    if (!checkinSnapshotJob.running) {
+      executeCheckinSnapshotJob().catch((err) => {
+        checkinSnapshotJob.running = false;
+        checkinSnapshotJob.error = err.message;
+        checkinSnapshotJob.message = err.message;
+        checkinSnapshotJob.finishedAt = new Date().toISOString();
+      });
+      return res.status(202).json({ success: true, started: true, status: getCheckinSnapshotStatus() });
+    }
+
+    return res.status(202).json({ success: true, started: false, status: getCheckinSnapshotStatus() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
