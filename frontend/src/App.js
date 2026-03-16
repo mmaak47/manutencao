@@ -141,6 +141,8 @@ function App() {
   const [originFormLoading, setOriginFormLoading] = useState(false);
   const [originSaving, setOriginSaving] = useState(false);
   const liveViewRef = useRef({ active: false, screenId: null });
+  const checkinSnapshotRunningRef = useRef(false);
+  const checkinSnapshotLastFinishedAtRef = useRef('');
 
   // NEW FEATURE STATES
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true');
@@ -615,9 +617,27 @@ function App() {
     if (!authToken || currentUser?.role !== 'admin') return null;
     try {
       const res = await axios.get(`${API_BASE}/checkin/snapshot/status`, authConfig);
-      setCheckinSnapshotStatus(res.data);
-      setCheckinSyncing(!!res.data?.running);
-      return res.data;
+      const status = res.data || {};
+      setCheckinSnapshotStatus(status);
+
+      const isRunning = !!status.running;
+      const wasRunning = checkinSnapshotRunningRef.current;
+      checkinSnapshotRunningRef.current = isRunning;
+      setCheckinSyncing(isRunning);
+
+      const finishedAt = String(status.finishedAt || '');
+      if (!isRunning && wasRunning && finishedAt && finishedAt !== checkinSnapshotLastFinishedAtRef.current) {
+        checkinSnapshotLastFinishedAtRef.current = finishedAt;
+        await fetchCheckinReport();
+
+        if (status.error) {
+          setAppAlert({ open: true, message: status.error, type: 'error' });
+        } else {
+          setAppAlert({ open: true, message: status.message || 'Coleta concluída!', type: 'success' });
+        }
+      }
+
+      return status;
     } catch (err) {
       console.error('Error fetching checkin snapshot status:', err);
       return null;
@@ -629,37 +649,31 @@ function App() {
     setCheckinSyncing(true);
     try {
       await axios.post(`${API_BASE}/checkin/snapshot`, {}, authConfig);
-
-      let completed = null;
-      for (let attempt = 0; attempt < 240; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        const status = await fetchCheckinSnapshotStatus();
-        if (!status) continue;
-        if (!status.running) {
-          completed = status;
-          break;
-        }
+      const status = await fetchCheckinSnapshotStatus();
+      if (status?.running) {
+        setAppAlert({ open: true, message: 'Coleta iniciada. O progresso será atualizado automaticamente.', type: 'info' });
+      } else if (status?.error) {
+        setAppAlert({ open: true, message: status.error, type: 'error' });
       }
-
-      if (!completed) {
-        setAppAlert({ open: true, message: 'A coleta segue em processamento. Atualize a página em alguns instantes para consultar o resultado.', type: 'info' });
-        return;
-      }
-
-      if (completed.error) {
-        setAppAlert({ open: true, message: completed.error || 'Erro ao coletar dados do origin', type: 'error' });
-        return;
-      }
-
-      setAppAlert({ open: true, message: completed.message || 'Coleta concluída!', type: 'success' });
-      await fetchCheckinReport();
     } catch (err) {
       const msg = err?.response?.data?.error || 'Erro ao iniciar coleta do origin';
       setAppAlert({ open: true, message: msg, type: 'error' });
     } finally {
-      setCheckinSyncing(false);
+      await fetchCheckinSnapshotStatus();
     }
   };
+
+  useEffect(() => {
+    if (!authToken || currentUser?.role !== 'admin' || activePage !== 'checkin') return undefined;
+
+    const poll = async () => {
+      await fetchCheckinSnapshotStatus();
+    };
+
+    poll();
+    const timer = setInterval(poll, 5000);
+    return () => clearInterval(timer);
+  }, [authToken, currentUser?.role, activePage]);
 
   const addCheckinLocation = async () => {
     try {
