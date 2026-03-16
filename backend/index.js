@@ -3829,15 +3829,19 @@ function normalizeCheckinLocations(locations) {
     if (isStaticLocation(locationName, locationType)) continue;
 
     const locationKey = String(loc?.locationKey || normalizeLocationKey(locationName, locationType, city));
-    const clients = normalizeClientList(loc?.clients || []);
+    const clientsManual = loc?.clientsManual === true;
+    const clients = clientsManual ? normalizeClientList(loc?.clients || []) : [];
 
     if (!merged.has(locationKey)) {
-      merged.set(locationKey, { locationKey, locationName, locationType, city, address, clients, operatingHours });
+      merged.set(locationKey, { locationKey, locationName, locationType, city, address, clients, clientsManual, operatingHours });
       continue;
     }
 
     const existing = merged.get(locationKey);
-    existing.clients = normalizeClientList([...(existing.clients || []), ...clients]);
+    if (clientsManual) {
+      existing.clients = normalizeClientList([...(existing.clients || []), ...clients]);
+      existing.clientsManual = true;
+    }
     if (!existing.address && address) existing.address = address;
     if (!existing.operatingHours && operatingHours) existing.operatingHours = operatingHours;
   }
@@ -3978,7 +3982,9 @@ async function executeCheckinSnapshotJob() {
     for (const loc of storedLocations) {
       const key = buildCheckinLocationGroupKey(loc.locationName, loc.address || '');
       if (!key) continue;
-      manualClientsByGroup.set(key, normalizeClientList(loc.clients || []));
+      if (loc.clientsManual === true) {
+        manualClientsByGroup.set(key, normalizeClientList(loc.clients || []));
+      }
     }
 
     const screens = await Screen.findAll({
@@ -4036,7 +4042,8 @@ async function executeCheckinSnapshotJob() {
         city,
         address,
         operatingHours,
-        clients: normalizeClientList(manualClients)
+        clients: normalizeClientList(manualClients),
+        clientsManual: true
       });
 
       checkinSnapshotJob.processedLocations += 1;
@@ -4136,7 +4143,7 @@ app.post('/checkin/locations', authenticateToken, requireAdmin, async (req, res)
 
     const saved = await saveStoredCheckinLocations(cfg, [
       ...locations,
-      { locationKey, locationName, locationType, city, address, operatingHours, clients }
+      { locationKey, locationName, locationType, city, address, operatingHours, clients, clientsManual: true }
     ]);
 
     res.json({ success: true, locations: saved.locations, updatedAt: saved.updatedAt });
@@ -4176,7 +4183,7 @@ app.put('/checkin/locations/:locationKey', authenticateToken, requireAdmin, asyn
     }
 
     const next = [...locations];
-    next[idx] = { locationKey: newKey, locationName, locationType, city, address, operatingHours, clients };
+    next[idx] = { locationKey: newKey, locationName, locationType, city, address, operatingHours, clients, clientsManual: true };
 
     const saved = await saveStoredCheckinLocations(cfg, next);
     res.json({ success: true, locationKey: newKey, locations: saved.locations, updatedAt: saved.updatedAt });

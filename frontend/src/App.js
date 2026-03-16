@@ -3737,7 +3737,7 @@ function App() {
         <div className="checkin-header no-print">
           <div className="checkin-title">
             <h3><FiCamera size={18} /> Checkin Fotográfico</h3>
-            <p>Lista de locais por categoria. Coleta manual única e edição pelo administrador.</p>
+            <p>Lista de locais por categoria. Clientes são preenchidos apenas manualmente em Editar Local.</p>
           </div>
           <div className="checkin-header-actions">
             {currentUser?.role === 'admin' && (
@@ -3858,7 +3858,7 @@ function App() {
                           <td>{loc.operatingHours || '-'}</td>
                           {currentUser?.role === 'admin' && (
                             <td className="no-print">
-                              <button className="btn-icon" title="Editar local" onClick={() => editCheckinLocation(loc)}>
+                              <button className="btn-icon" title="Editar local e clientes manuais" onClick={() => editCheckinLocation(loc)}>
                                 <FiEdit size={14} />
                               </button>
                               <button className="btn-icon" title="Remover local" onClick={() => removeCheckinLocation(loc.locationKey)}>
@@ -3920,7 +3920,7 @@ function App() {
                 />
                 <textarea
                   rows="3"
-                  placeholder="Clientes separados por vírgula"
+                  placeholder="Clientes manuais separados por vírgula"
                   value={checkinNewLocation.clientsText}
                   onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, clientsText: e.target.value }))}
                 />
