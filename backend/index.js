@@ -4417,7 +4417,8 @@ async function syncWithOrigin() {
         if (screen) {
           // Update existing screen — trust the parser's status detection
           const updates = {};
-          if (screen.status !== mon.status) {
+          const isManualLockedStatus = screen.status === 'not_installed' || screen.status === 'static';
+          if (!isManualLockedStatus && screen.status !== mon.status) {
             updates.status = mon.status;
           }
           if (mon.stats) updates.stats = mon.stats;
@@ -4434,14 +4435,15 @@ async function syncWithOrigin() {
           if (Object.keys(updates).length) {
             const prevStatus = screen.status;
             await screen.update(updates);
-            if (prevStatus !== mon.status) {
-              await logStatusChange(screen, mon.status);
+            if (updates.status && prevStatus !== updates.status) {
+              await logStatusChange(screen, updates.status);
             }
           }
 
           // Record telemetry snapshot
           try {
-            const snap = { screenId: screen.id, status: mon.status };
+            const effectiveStatus = updates.status || screen.status;
+            const snap = { screenId: screen.id, status: effectiveStatus };
             if (mon.stats) {
               const parsed = JSON.parse(mon.stats);
               if (parsed.cpuTemp != null) snap.cpuTemp = parsed.cpuTemp;
@@ -5145,7 +5147,10 @@ app.post('/sync/import', authenticateToken, requireAdmin, async (req, res) => {
 
       if (screen) {
         const updates = {};
-        updates.status = mon.status;
+        const isManualLockedStatus = screen.status === 'not_installed' || screen.status === 'static';
+        if (!isManualLockedStatus) {
+          updates.status = mon.status;
+        }
         updates.name = cleanedName;
         if (mon.stats) updates.stats = mon.stats;
         if (mon.orientation) updates.orientation = mon.orientation;
