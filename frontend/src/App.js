@@ -112,7 +112,8 @@ function App() {
   const [checkinCityFilter, setCheckinCityFilter] = useState('all');
   const [checkinTypeFilter, setCheckinTypeFilter] = useState('all');
   const [showCheckinAddModal, setShowCheckinAddModal] = useState(false);
-  const [checkinNewLocation, setCheckinNewLocation] = useState({ locationName: '', locationType: '', city: '', clientsText: '' });
+  const [checkinEditingKey, setCheckinEditingKey] = useState(null);
+  const [checkinNewLocation, setCheckinNewLocation] = useState({ locationName: '', locationType: '', city: '', operatingHours: '', clientsText: '' });
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(30);
@@ -631,21 +632,42 @@ function App() {
         .map((c) => c.trim())
         .filter(Boolean);
 
-      await axios.post(`${API_BASE}/checkin/locations`, {
+      const payload = {
         locationName: checkinNewLocation.locationName,
         locationType: checkinNewLocation.locationType,
         city: checkinNewLocation.city,
+        operatingHours: checkinNewLocation.operatingHours,
         clients
-      }, authConfig);
+      };
+
+      if (checkinEditingKey) {
+        await axios.put(`${API_BASE}/checkin/locations/${encodeURIComponent(checkinEditingKey)}`, payload, authConfig);
+      } else {
+        await axios.post(`${API_BASE}/checkin/locations`, payload, authConfig);
+      }
 
       setShowCheckinAddModal(false);
-      setCheckinNewLocation({ locationName: '', locationType: '', city: '', clientsText: '' });
+      setCheckinEditingKey(null);
+      setCheckinNewLocation({ locationName: '', locationType: '', city: '', operatingHours: '', clientsText: '' });
       await fetchCheckinReport();
-      setAppAlert({ open: true, message: 'Local adicionado com sucesso', type: 'success' });
+      setAppAlert({ open: true, message: checkinEditingKey ? 'Local atualizado com sucesso' : 'Local adicionado com sucesso', type: 'success' });
     } catch (err) {
-      const msg = err?.response?.data?.error || 'Erro ao adicionar local';
+      const msg = err?.response?.data?.error || (checkinEditingKey ? 'Erro ao atualizar local' : 'Erro ao adicionar local');
       setAppAlert({ open: true, message: msg, type: 'error' });
     }
+  };
+
+  const editCheckinLocation = (loc) => {
+    const clientsText = Array.isArray(loc?.clients) ? loc.clients.join(', ') : '';
+    setCheckinEditingKey(loc?.locationKey || null);
+    setCheckinNewLocation({
+      locationName: loc?.locationName || '',
+      locationType: loc?.locationType || '',
+      city: loc?.city || '',
+      operatingHours: loc?.operatingHours || '',
+      clientsText
+    });
+    setShowCheckinAddModal(true);
   };
 
   const removeCheckinLocation = async (locationKey) => {
@@ -3673,7 +3695,14 @@ function App() {
               </button>
             )}
             {currentUser?.role === 'admin' && (
-              <button className="btn-secondary" onClick={() => setShowCheckinAddModal(true)}>
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setCheckinEditingKey(null);
+                  setCheckinNewLocation({ locationName: '', locationType: '', city: '', operatingHours: '', clientsText: '' });
+                  setShowCheckinAddModal(true);
+                }}
+              >
                 <FiPlus size={14} /> Adicionar Local
               </button>
             )}
@@ -3738,6 +3767,7 @@ function App() {
                       <th>Local</th>
                       <th>Cidade</th>
                       <th>Categoria</th>
+                      <th>Horário</th>
                       <th>Clientes</th>
                       {currentUser?.role === 'admin' && <th className="no-print">Ações</th>}
                     </tr>
@@ -3771,6 +3801,7 @@ function App() {
                           </td>
                           <td>{loc.city || '-'}</td>
                           <td>{loc.locationType || '-'}</td>
+                          <td>{loc.operatingHours || '-'}</td>
                           <td>
                             {clients.length > 0 ? (
                               <div className="checkin-clients">
@@ -3780,6 +3811,9 @@ function App() {
                           </td>
                           {currentUser?.role === 'admin' && (
                             <td className="no-print">
+                              <button className="btn-icon" title="Editar local" onClick={() => editCheckinLocation(loc)}>
+                                <FiEdit size={14} />
+                              </button>
                               <button className="btn-icon" title="Remover local" onClick={() => removeCheckinLocation(loc.locationKey)}>
                                 <FiTrash2 size={14} />
                               </button>
@@ -3800,11 +3834,11 @@ function App() {
         </div>
 
         {showCheckinAddModal && (
-          <div className="modal-overlay" onClick={() => setShowCheckinAddModal(false)}>
+          <div className="modal-overlay" onClick={() => { setShowCheckinAddModal(false); setCheckinEditingKey(null); }}>
             <div className="modal-content" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
-                <h2>Adicionar Local</h2>
-                <button className="modal-close" onClick={() => setShowCheckinAddModal(false)}>×</button>
+                <h2>{checkinEditingKey ? 'Editar Local' : 'Adicionar Local'}</h2>
+                <button className="modal-close" onClick={() => { setShowCheckinAddModal(false); setCheckinEditingKey(null); }}>×</button>
               </div>
               <div className="checkin-add-form">
                 <input
@@ -3825,6 +3859,12 @@ function App() {
                   value={checkinNewLocation.city}
                   onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, city: e.target.value }))}
                 />
+                <input
+                  type="text"
+                  placeholder="Horário de funcionamento (ex: 06:00 às 22:00 (mon-sat))"
+                  value={checkinNewLocation.operatingHours}
+                  onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, operatingHours: e.target.value }))}
+                />
                 <textarea
                   rows="3"
                   placeholder="Clientes separados por vírgula"
@@ -3833,8 +3873,8 @@ function App() {
                 />
               </div>
               <div className="modal-footer">
-                <button className="btn-secondary" onClick={() => setShowCheckinAddModal(false)}>Cancelar</button>
-                <button className="btn-primary" onClick={addCheckinLocation}>Salvar Local</button>
+                <button className="btn-secondary" onClick={() => { setShowCheckinAddModal(false); setCheckinEditingKey(null); }}>Cancelar</button>
+                <button className="btn-primary" onClick={addCheckinLocation}>{checkinEditingKey ? 'Salvar Alterações' : 'Salvar Local'}</button>
               </div>
             </div>
           </div>

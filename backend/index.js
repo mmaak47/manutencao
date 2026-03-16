@@ -3609,6 +3609,26 @@ function normalizeClientList(clients) {
   return [...canonical.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
+function formatOperatingHours(screen) {
+  if (!screen) return '';
+  const start = String(screen.operatingHoursStart || '').trim();
+  const end = String(screen.operatingHoursEnd || '').trim();
+  const days = String(screen.operatingDays || '').trim();
+
+  if (!start && !end && !days) return '';
+
+  const range = (start || end) ? `${start || '--:--'} às ${end || '--:--'}` : '';
+  if (range && days) return `${range} (${days})`;
+  return range || days;
+}
+
+function normalizeLocationType(locationType) {
+  const text = String(locationType || '').trim();
+  if (!text) return 'Sem categoria';
+  if (/^(escolha|selecione)\b.*\b(tipo|categoria)\b/i.test(text)) return 'Sem categoria';
+  return text;
+}
+
 function normalizeCity(city) {
   // Strip trailing state suffix like "/PR", "/SP", etc., and normalize whitespace
   return String(city || '').trim().replace(/\s*\/\s*[A-Z]{2}$/i, '').trim();
@@ -3635,8 +3655,9 @@ function normalizeCheckinLocations(locations) {
   const merged = new Map();
   for (const loc of (Array.isArray(locations) ? locations : [])) {
     const locationName = String(loc?.locationName || '').trim();
-    const locationType = String(loc?.locationType || 'Sem categoria').trim() || 'Sem categoria';
+    const locationType = normalizeLocationType(loc?.locationType);
     const city = normalizeCity(String(loc?.city || '').trim());
+    const operatingHours = String(loc?.operatingHours || '').trim();
     if (!locationName) continue;
     if (isStaticLocation(locationName, locationType)) continue;
 
@@ -3644,12 +3665,13 @@ function normalizeCheckinLocations(locations) {
     const clients = normalizeClientList(loc?.clients || []);
 
     if (!merged.has(locationKey)) {
-      merged.set(locationKey, { locationKey, locationName, locationType, city, clients });
+      merged.set(locationKey, { locationKey, locationName, locationType, city, clients, operatingHours });
       continue;
     }
 
     const existing = merged.get(locationKey);
     existing.clients = normalizeClientList([...(existing.clients || []), ...clients]);
+    if (!existing.operatingHours && operatingHours) existing.operatingHours = operatingHours;
   }
 
   return [...merged.values()].sort((a, b) => {
@@ -3683,18 +3705,39 @@ async function saveStoredCheckinLocations(cfg, locations) {
 
 function parseSelectedOptionText(html, fieldName) {
   const source = String(html || '');
-  const selectMatch = source.match(new RegExp(`<select[^>]*name=["']${fieldName}["'][^>]*>([\\s\\S]*?)<\\/select>`, 'i'));
+  const selectMatch = source.match(new RegExp(`(<select[^>]*name=["']${fieldName}["'][^>]*>)([\\s\\S]*?)<\\/select>`, 'i'));
   if (!selectMatch) return '';
-  const selectBody = selectMatch[1];
+  const selectOpenTag = selectMatch[1];
+  const selectBody = selectMatch[2];
 
-  const selected = selectBody.match(/<option[^>]*selected[^>]*>([\s\S]*?)<\/option>/i);
-  if (selected) {
-    return selected[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+  const decodeOptionText = (text) => decodeHtmlEntities(String(text || ''))
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const isPlaceholder = (text) => /^(escolha|selecione)\b.*\b(tipo|categoria)\b/i.test(String(text || '').trim());
+
+  const options = [];
+  const optionRegex = /<option([^>]*)>([\s\S]*?)<\/option>/gi;
+  let optionMatch;
+  while ((optionMatch = optionRegex.exec(selectBody)) !== null) {
+    const attrs = optionMatch[1] || '';
+    const text = decodeOptionText(optionMatch[2]);
+    const valueMatch = attrs.match(/\bvalue=["']([^"']*)["']/i);
+    const value = valueMatch ? String(valueMatch[1]).trim() : '';
+    const selected = /\bselected\b/i.test(attrs);
+    options.push({ value, text, selected });
   }
 
-  const firstOption = selectBody.match(/<option[^>]*>([\s\S]*?)<\/option>/i);
-  if (firstOption) {
-    return firstOption[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+  const selectedValid = options.find((opt) => opt.selected && opt.text && !isPlaceholder(opt.text));
+  if (selectedValid) return selectedValid.text;
+
+  const selectValueMatch = selectOpenTag.match(/\bvalue=["']([^"']+)["']/i)
+    || source.match(new RegExp(`<input[^>]*name=["']${fieldName}["'][^>]*value=["']([^"']+)["'][^>]*>`, 'i'));
+  const selectedValue = selectValueMatch ? String(selectValueMatch[1]).trim() : '';
+  if (selectedValue) {
+    const byValue = options.find((opt) => opt.value === selectedValue && opt.text && !isPlaceholder(opt.text));
+    if (byValue) return byValue.text;
   }
 
   return '';
@@ -3754,7 +3797,7 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
   try {
     const screens = await Screen.findAll({
       where: { originId: { [Op.not]: null } },
-      attributes: ['id', 'name', 'location', 'address', 'originId'],
+      attributes: ['id', 'name', 'location', 'address', 'originId', 'operatingHoursStart', 'operatingHoursEnd', 'operatingDays'],
       order: [['location', 'ASC'], ['name', 'ASC']]
     });
 
@@ -3773,6 +3816,8 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
     for (const [locationName, locScreens] of grouped.entries()) {
       const primary = locScreens[0];
       const city = extractCityFromAddress(primary?.address);
+      const hoursSource = locScreens.find((s) => s.operatingHoursStart || s.operatingHoursEnd || s.operatingDays) || primary;
+      const operatingHours = formatOperatingHours(hoursSource);
 
       let locationType = '';
       if (primary?.originId) {
@@ -3782,7 +3827,7 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
         locationType = typeCache.get(primary.originId) || '';
       }
 
-      locationType = String(locationType || 'Sem categoria').trim() || 'Sem categoria';
+        locationType = normalizeLocationType(locationType);
       if (isStaticLocation(locationName, locationType)) continue;
 
       const clientsSet = new Set();
@@ -3798,6 +3843,7 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
         locationName,
         locationType,
         city,
+        operatingHours,
         clients: normalizeClientList([...clientsSet])
       });
     }
@@ -3830,8 +3876,9 @@ app.post('/checkin/sync', authenticateToken, requireAdmin, async (req, res) => {
 app.post('/checkin/locations', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const locationName = String(req.body?.locationName || '').trim();
-    const locationType = String(req.body?.locationType || '').trim() || 'Sem categoria';
+    const locationType = normalizeLocationType(req.body?.locationType);
     const city = normalizeCity(String(req.body?.city || '').trim());
+    const operatingHours = String(req.body?.operatingHours || '').trim();
     const clients = normalizeClientList(req.body?.clients || []);
 
     if (!locationName) {
@@ -3850,10 +3897,49 @@ app.post('/checkin/locations', authenticateToken, requireAdmin, async (req, res)
 
     const saved = await saveStoredCheckinLocations(cfg, [
       ...locations,
-      { locationKey, locationName, locationType, city, clients }
+      { locationKey, locationName, locationType, city, operatingHours, clients }
     ]);
 
     res.json({ success: true, locations: saved.locations, updatedAt: saved.updatedAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /checkin/locations/:locationKey — update existing location metadata (admin)
+app.put('/checkin/locations/:locationKey', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const locationKey = String(req.params.locationKey || '').trim();
+    if (!locationKey) return res.status(400).json({ error: 'locationKey é obrigatório' });
+
+    const locationName = String(req.body?.locationName || '').trim();
+    const locationType = normalizeLocationType(req.body?.locationType);
+    const city = normalizeCity(String(req.body?.city || '').trim());
+    const operatingHours = String(req.body?.operatingHours || '').trim();
+    const clients = normalizeClientList(req.body?.clients || []);
+
+    if (!locationName) {
+      return res.status(400).json({ error: 'locationName é obrigatório' });
+    }
+    if (isStaticLocation(locationName, locationType)) {
+      return res.status(400).json({ error: 'Frontlight/Backlight não devem entrar no checkin' });
+    }
+
+    const { cfg, locations } = await loadStoredCheckinLocations();
+    const idx = locations.findIndex((l) => l.locationKey === locationKey);
+    if (idx < 0) return res.status(404).json({ error: 'Local não encontrado' });
+
+    const newKey = normalizeLocationKey(locationName, locationType, city);
+    const keyConflict = locations.some((l, i) => i !== idx && l.locationKey === newKey);
+    if (keyConflict) {
+      return res.status(409).json({ error: 'Já existe outro local com esse nome/categoria/cidade' });
+    }
+
+    const next = [...locations];
+    next[idx] = { locationKey: newKey, locationName, locationType, city, operatingHours, clients };
+
+    const saved = await saveStoredCheckinLocations(cfg, next);
+    res.json({ success: true, locationKey: newKey, locations: saved.locations, updatedAt: saved.updatedAt });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
