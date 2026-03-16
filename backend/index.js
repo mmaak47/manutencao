@@ -3484,13 +3484,44 @@ function decodeHtmlEntities(text) {
   return value;
 }
 
+function decodeJsUnicodeEscapes(text) {
+  return String(text || '').replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16) || 0));
+}
+
 function normalizeClientName(rawName) {
-  return decodeHtmlEntities(rawName)
+  return decodeJsUnicodeEscapes(decodeHtmlEntities(rawName))
     .replace(/^\s*\[[A-Z0-9]+\]\s*/i, '')
     .replace(/\bamp;\b/gi, ' ')
+    .replace(/^["'`[{(\s]+/, '')
+    .replace(/["'`}\])\s]+$/, '')
     .replace(/^[;&\s]+/, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isLikelyClientName(name) {
+  const text = normalizeClientName(name);
+  if (!text || text.length < 3 || text.length > 80) return false;
+
+  const lowered = text.toLowerCase();
+  if (
+    lowered.includes('data_inicial') ||
+    lowered.includes('data_final') ||
+    lowered.includes('cliente":') ||
+    lowered.includes('cliente:') ||
+    lowered.includes('campanha') ||
+    lowered.includes('json')
+  ) {
+    return false;
+  }
+
+  if (/[{}["]/.test(text)) return false;
+  if (/^[0-9:_,-]+$/.test(text)) return false;
+
+  // Reject obvious serialized object fragments.
+  if ((text.includes(':') || text.includes(',')) && /[a-z_]+\s*:/.test(lowered)) return false;
+
+  return true;
 }
 
 function clientCanonicalKey(name) {
@@ -3533,7 +3564,7 @@ function parseMonitorClients(html) {
     if (raw && raw.length > 2) {
       raw.split(/\s*&\s*|\s*\/\s*/).forEach(c => {
         const name = normalizeClientName(c);
-        if (name && name.length > 2 && name.length < 80) clients.add(name);
+        if (isLikelyClientName(name)) clients.add(name);
       });
     }
   }
@@ -3544,7 +3575,7 @@ function parseMonitorClients(html) {
     extractClientFromGroupName(m[1], clients);
   }
 
-  return [...clients].filter(c => c.length > 2 && c.length < 100);
+  return [...clients].filter(isLikelyClientName);
 }
 
 function getCachedCheckinClients(originId) {
@@ -3565,7 +3596,7 @@ function extractClientFromGroupName(raw, set) {
   // Split by & or / to handle multiple clients in one group
   beforePipe.split(/\s*&\s*|\s*\/\s*/).forEach(c => {
     const name = normalizeClientName(c);
-    if (name && name.length > 2 && name.length < 80) set.add(name);
+    if (isLikelyClientName(name)) set.add(name);
   });
 }
 
@@ -3620,7 +3651,7 @@ function normalizeClientList(clients) {
   const canonical = new Map();
   for (const c of clients) {
     const name = normalizeClientName(c);
-    if (!name || name.length > 120) continue;
+    if (!isLikelyClientName(name) || name.length > 120) continue;
 
     const key = clientCanonicalKey(name);
     if (!key) continue;
