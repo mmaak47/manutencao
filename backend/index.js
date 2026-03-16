@@ -3532,6 +3532,22 @@ function isLikelyClientName(name) {
   return true;
 }
 
+function normalizeMediaTitleToClient(rawTitle) {
+  let text = normalizeClientName(rawTitle);
+  if (!text) return '';
+
+  text = text
+    .replace(/\b\d{1,2}\/\d{4}\b/g, '')
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+    .replace(/\b(verticais?|vertical|institucional|template|agendado|futuro|grupo|campanha|playlist)\b/gi, '')
+    .replace(/\s*-\s*/g, ' | ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const first = text.split('|')[0].trim();
+  return normalizeClientName(first);
+}
+
 function clientCanonicalKey(name) {
   return normalizeClientName(name)
     .normalize('NFD')
@@ -3603,6 +3619,19 @@ function parseMonitorClients(html) {
       const name = normalizeClientName(part);
       if (isLikelyClientName(name)) clients.add(name);
     });
+  }
+
+  // Strategy 6: media card payloads where advertiser appears only in media title.
+  const mediaNameField = /"nome"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"\s*,\s*"(?:duracao|tempo|thumb|thumbnail|arquivo|url|video|id)"/gi;
+  while ((m = mediaNameField.exec(body)) !== null) {
+    const candidate = normalizeMediaTitleToClient(m[1]);
+    if (isLikelyClientName(candidate)) clients.add(candidate);
+  }
+
+  const mediaTitleField = /"(?:titulo|title)"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"\s*,\s*"(?:duracao|tempo|thumb|thumbnail|arquivo|url|video|id)"/gi;
+  while ((m = mediaTitleField.exec(body)) !== null) {
+    const candidate = normalizeMediaTitleToClient(m[1]);
+    if (isLikelyClientName(candidate)) clients.add(candidate);
   }
 
   return [...clients].filter(isLikelyClientName);
