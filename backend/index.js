@@ -3469,6 +3469,7 @@ app.listen(port, () => console.log(`API listening on ${port}`));
 // ===== CHECKIN PHOTO REPORT =====
 // In-memory client cache: { [originId]: { clients: string[], updatedAt: string } }
 const checkinClientsCache = {};
+const CHECKIN_CLIENT_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 
 function decodeHtmlEntities(text) {
   let value = String(text || '');
@@ -3530,6 +3531,15 @@ function parseMonitorClients(html) {
   }
 
   return [...clients].filter(c => c.length > 2 && c.length < 100);
+}
+
+function getCachedCheckinClients(originId) {
+  if (!originId) return null;
+  const cached = checkinClientsCache[originId];
+  if (!cached || !cached.updatedAt) return null;
+  const ageMs = Date.now() - new Date(cached.updatedAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > CHECKIN_CLIENT_CACHE_TTL_MS) return null;
+  return normalizeClientList(cached.clients || []);
 }
 
 function extractClientFromGroupName(raw, set) {
@@ -3831,11 +3841,20 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
       if (isStaticLocation(locationName, locationType)) continue;
 
       const clientsSet = new Set();
-      const sampleScreens = locScreens.slice(0, 6);
+      const sampleScreens = locScreens.slice(0, 3);
       for (const s of sampleScreens) {
-        const clients = await scrapeCheckinClients(s.originId);
-        checkinClientsCache[s.originId] = { clients, updatedAt: new Date().toISOString() };
+        if (!s.originId) continue;
+
+        let clients = getCachedCheckinClients(s.originId);
+        if (!clients) {
+          clients = await scrapeCheckinClients(s.originId);
+          checkinClientsCache[s.originId] = { clients, updatedAt: new Date().toISOString() };
+        }
+
         for (const c of clients) clientsSet.add(c);
+
+        // Most locations are resolved with one valid monitor; avoid slow extra scrapes.
+        if (clientsSet.size > 0) break;
       }
 
       locations.push({

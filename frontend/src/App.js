@@ -614,11 +614,17 @@ function App() {
     if (!authToken || checkinSyncing) return;
     setCheckinSyncing(true);
     try {
-      const res = await axios.post(`${API_BASE}/checkin/snapshot`, {}, authConfig);
+      const res = await axios.post(`${API_BASE}/checkin/snapshot`, {}, {
+        ...authConfig,
+        timeout: 240000
+      });
       setAppAlert({ open: true, message: res.data.message || 'Coleta concluída!', type: 'success' });
       await fetchCheckinReport();
     } catch (err) {
-      const msg = err?.response?.data?.error || 'Erro ao coletar dados do origin';
+      const timeout = err?.code === 'ECONNABORTED';
+      const msg = timeout
+        ? 'A coleta demorou demais e foi interrompida. Tente novamente; agora está otimizada.'
+        : (err?.response?.data?.error || 'Erro ao coletar dados do origin');
       setAppAlert({ open: true, message: msg, type: 'error' });
     } finally {
       setCheckinSyncing(false);
