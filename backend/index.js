@@ -3470,6 +3470,7 @@ app.listen(port, () => console.log(`API listening on ${port}`));
 // In-memory client cache: { [originId]: { clients: string[], updatedAt: string } }
 const checkinClientsCache = {};
 const CHECKIN_CLIENT_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const CHECKIN_MAX_CLIENT_PROBES_PER_LOCATION = 10;
 
 function decodeHtmlEntities(text) {
   let value = String(text || '');
@@ -3841,8 +3842,16 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
       if (isStaticLocation(locationName, locationType)) continue;
 
       const clientsSet = new Set();
-      const sampleScreens = locScreens.slice(0, 3);
-      for (const s of sampleScreens) {
+      const uniqueOriginScreens = [];
+      const seenOriginIds = new Set();
+      for (const s of locScreens) {
+        if (!s.originId || seenOriginIds.has(s.originId)) continue;
+        seenOriginIds.add(s.originId);
+        uniqueOriginScreens.push(s);
+        if (uniqueOriginScreens.length >= CHECKIN_MAX_CLIENT_PROBES_PER_LOCATION) break;
+      }
+
+      for (const s of uniqueOriginScreens) {
         if (!s.originId) continue;
 
         let clients = getCachedCheckinClients(s.originId);
@@ -3852,9 +3861,6 @@ app.post('/checkin/snapshot', authenticateToken, requireAdmin, async (req, res) 
         }
 
         for (const c of clients) clientsSet.add(c);
-
-        // Most locations are resolved with one valid monitor; avoid slow extra scrapes.
-        if (clientsSet.size > 0) break;
       }
 
       locations.push({
