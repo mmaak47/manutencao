@@ -3646,6 +3646,36 @@ function normalizeLocationKey(locationName, locationType, city) {
   return raw.slice(0, 180);
 }
 
+function normalizeCheckinLocationName(locationName) {
+  return String(locationName || '')
+    .replace(/\((?:telas?|led|pain(?:eis?|el)|indoor|outdoor|ooh|frontlight|backlight)\)/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+-\s+/g, ' - ')
+    .trim();
+}
+
+function buildCheckinLocationGroupKey(locationName, address) {
+  const normalizedName = normalizeCheckinLocationName(locationName)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  const normalizedAddress = String(address || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s*\/\s*[a-z]{2}\b/g, '')
+    .replace(/cep\s*\d[\d-]*/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return `${normalizedName}|${normalizedAddress}`;
+}
+
 function normalizeClientList(clients) {
   if (!Array.isArray(clients)) return [];
   const canonical = new Map();
@@ -3890,8 +3920,9 @@ async function executeCheckinSnapshotJob() {
       if (isStaticMedia(s)) continue;
       const locationName = String(s.location || '').trim();
       if (!locationName) continue;
-      if (!grouped.has(locationName)) grouped.set(locationName, []);
-      grouped.get(locationName).push(s);
+      const groupKey = buildCheckinLocationGroupKey(locationName, s.address);
+      if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+      grouped.get(groupKey).push(s);
     }
 
     checkinSnapshotJob.totalLocations = grouped.size;
@@ -3900,11 +3931,11 @@ async function executeCheckinSnapshotJob() {
     const typeCache = new Map();
     const locations = [];
 
-    for (const [locationName, locScreens] of grouped.entries()) {
+    for (const [, locScreens] of grouped.entries()) {
+      const primary = locScreens[0];
+      const locationName = normalizeCheckinLocationName(primary?.location || '');
       checkinSnapshotJob.currentLocation = locationName;
       checkinSnapshotJob.message = `Coletando ${checkinSnapshotJob.processedLocations + 1}/${grouped.size}: ${locationName}`;
-
-      const primary = locScreens[0];
       const city = extractCityFromAddress(primary?.address);
       const hoursSource = locScreens.find((s) => s.operatingHoursStart || s.operatingHoursEnd || s.operatingDays) || primary;
       const operatingHours = formatOperatingHours(hoursSource);
