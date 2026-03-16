@@ -4427,9 +4427,9 @@
   .checkin-print-title {
     font-size: 22pt;
     font-weight: 700;
-    font-family: Georgia, 'Times New Roman', serif;
+    font-family: 'Poppins', 'Montserrat', sans-serif;
     text-decoration: underline;
-    letter-spacing: -0.3px;
+    letter-spacing: -0.5px;
     margin: 0 0 2mm;
     color: #000;
   }
