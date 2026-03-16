@@ -3470,6 +3470,35 @@ app.listen(port, () => console.log(`API listening on ${port}`));
 // In-memory client cache: { [originId]: { clients: string[], updatedAt: string } }
 const checkinClientsCache = {};
 
+function decodeHtmlEntities(text) {
+  let value = String(text || '');
+  value = value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;|&#x27;/gi, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code) || 0))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16) || 0));
+  return value;
+}
+
+function normalizeClientName(rawName) {
+  return decodeHtmlEntities(rawName)
+    .replace(/\bamp;\b/gi, ' ')
+    .replace(/^[;&\s]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function clientCanonicalKey(name) {
+  return normalizeClientName(name)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 // Parse group/client names from the campanhas-monitor HTML page
 function parseMonitorClients(html) {
   const body = String(html || '');
@@ -3485,10 +3514,10 @@ function parseMonitorClients(html) {
   // Strategy 2: Raw text inside HTML that starts with [CODE]
   const rawBracket = /\[([A-Z0-9]{3,})\]\s*([^<|\n"]{2,80})/g;
   while ((m = rawBracket.exec(body)) !== null) {
-    const raw = m[2].trim().replace(/\s*\|.*$/, '').trim();
+    const raw = normalizeClientName(m[2]).replace(/\s*\|.*$/, '').trim();
     if (raw && raw.length > 2) {
       raw.split(/\s*&\s*|\s*\/\s*/).forEach(c => {
-        const name = c.trim();
+        const name = normalizeClientName(c);
         if (name && name.length > 2 && name.length < 80) clients.add(name);
       });
     }
@@ -3505,13 +3534,13 @@ function parseMonitorClients(html) {
 
 function extractClientFromGroupName(raw, set) {
   // Strip [CODE] prefix
-  const withoutCode = String(raw || '').replace(/^\[([A-Z0-9]+)\]\s*/, '').trim();
+  const withoutCode = normalizeClientName(String(raw || '').replace(/^\[([A-Z0-9]+)\]\s*/, '').trim());
   // Take portion before | (category marker)
   const beforePipe = withoutCode.split('|')[0].trim();
   if (!beforePipe || beforePipe.length < 2) return;
   // Split by & or / to handle multiple clients in one group
   beforePipe.split(/\s*&\s*|\s*\/\s*/).forEach(c => {
-    const name = c.trim();
+    const name = normalizeClientName(c);
     if (name && name.length > 2 && name.length < 80) set.add(name);
   });
 }
@@ -3564,12 +3593,20 @@ function normalizeLocationKey(locationName, locationType, city) {
 
 function normalizeClientList(clients) {
   if (!Array.isArray(clients)) return [];
-  const set = new Set();
+  const canonical = new Map();
   for (const c of clients) {
-    const name = String(c || '').trim();
-    if (name && name.length <= 120) set.add(name);
+    const name = normalizeClientName(c);
+    if (!name || name.length > 120) continue;
+
+    const key = clientCanonicalKey(name);
+    if (!key) continue;
+
+    const existing = canonical.get(key);
+    if (!existing || name.length > existing.length) {
+      canonical.set(key, name);
+    }
   }
-  return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  return [...canonical.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
 function normalizeCity(city) {
