@@ -4076,6 +4076,34 @@
   cursor: pointer;
 }
 
+.checkin-note-panel {
+  margin-bottom: 20px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.checkin-note-panel label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.checkin-note-panel textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
 .checkin-loading,
 .checkin-empty {
   display: flex;
@@ -4438,6 +4466,31 @@
     font-size: 9pt;
     color: #555;
     margin: 0;
+  }
+
+  .checkin-print-note {
+    margin: 0 0 8mm;
+    padding: 4mm 4.5mm;
+    border: 1px solid #cfcfcf;
+    background: #fafafa !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .checkin-print-note h2 {
+    margin: 0 0 1.5mm;
+    font-size: 10pt;
+    font-family: 'Poppins', 'Montserrat', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .checkin-print-note p {
+    margin: 0;
+    font-size: 9pt;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    color: #222;
   }
 
   /* ---- Section groups ---- */

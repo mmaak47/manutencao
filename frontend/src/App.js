@@ -10,6 +10,7 @@ import './App.css';
 
 const API_BASE = process.env.REACT_APP_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : `${window.location.protocol}//${window.location.host}`);
 const REPORT_STORAGE_KEY = 'maintenance_report_rows_v1';
+const CHECKIN_PRINT_NOTE_STORAGE_KEY = 'checkin_print_general_note_v1';
 const EMPTY_TICKET_FORM = { title: '', description: '', category: 'general', priority: 'medium', screenId: '', assignedTo: '', timeSpentMinutes: '', actualCost: '' };
 const EMPTY_SCHEDULE_FORM = { title: '', description: '', scheduledDate: '', scheduledTime: '', assignedTo: '', screenId: '', location: '', color: '#E95D34' };
 
@@ -112,6 +113,13 @@ function App() {
   const [checkinChecked, setCheckinChecked] = useState({});
   const [checkinCityFilter, setCheckinCityFilter] = useState('all');
   const [checkinTypeFilter, setCheckinTypeFilter] = useState('all');
+  const [checkinPrintNote, setCheckinPrintNote] = useState(() => {
+    try {
+      return localStorage.getItem(CHECKIN_PRINT_NOTE_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const [showCheckinAddModal, setShowCheckinAddModal] = useState(false);
   const [checkinEditingKey, setCheckinEditingKey] = useState(null);
   const [checkinNewLocation, setCheckinNewLocation] = useState({ locationName: '', locationType: '', city: '', address: '', operatingHours: '', clientsText: '' });
@@ -455,6 +463,14 @@ function App() {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     localStorage.setItem('darkMode', darkMode);
   }, [darkMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHECKIN_PRINT_NOTE_STORAGE_KEY, checkinPrintNote);
+    } catch (err) {
+      console.error('Falha ao salvar observacao geral do checkin', err);
+    }
+  }, [checkinPrintNote]);
 
   // Fetch data on page change
   useEffect(() => {
@@ -3781,11 +3797,29 @@ function App() {
           </select>
         </div>
 
+        <div className="checkin-note-panel no-print">
+          <label htmlFor="checkin-print-note">Observacao geral do PDF</label>
+          <textarea
+            id="checkin-print-note"
+            value={checkinPrintNote}
+            onChange={e => setCheckinPrintNote(e.target.value)}
+            placeholder="Digite aqui uma observacao geral para aparecer no PDF."
+            rows={4}
+          />
+        </div>
+
         <div className="checkin-print-header print-only">
           <img src={logoBlack} alt="Intermidia" className="checkin-print-logo" />
           <h1 className="checkin-print-title">Lista Vídeo de Checkins</h1>
           <p className="checkin-print-subtitle">Gerado em {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
         </div>
+
+        {!!checkinPrintNote.trim() && (
+          <div className="checkin-print-note print-only">
+            <h2>Observacao Geral</h2>
+            <p>{checkinPrintNote}</p>
+          </div>
+        )}
 
         {checkinLoading ? (
           <div className="checkin-loading"><FiRefreshCw size={24} className="spinning" /> Carregando...</div>
