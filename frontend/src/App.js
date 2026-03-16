@@ -3782,17 +3782,9 @@ function App() {
         </div>
 
         <div className="checkin-print-header print-only">
-          <h2>Checkin Fotográfico</h2>
-          <p>Gerado em: {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-          <p>
-            Filtros: Cidade {checkinCityFilter === 'all' ? 'Todas' : checkinCityFilter}
-            {' | '}
-            Categoria {checkinTypeFilter === 'all' ? 'Todas' : checkinTypeFilter}
-          </p>
-          <p>Total no snapshot: {(checkinData?.locations || []).length} local(is)</p>
-          {checkinData?.updatedAt && (
-            <p>Última coleta: {new Date(checkinData.updatedAt).toLocaleString('pt-BR')}</p>
-          )}
+          <img src={logoBlack} alt="Intermidia" className="checkin-print-logo" />
+          <h1 className="checkin-print-title">Lista Vídeo de Checkins</h1>
+          <p className="checkin-print-subtitle">Gerado em {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
         </div>
 
         {checkinLoading ? (
@@ -3822,7 +3814,7 @@ function App() {
                 <span className="checkin-type-badge">{typeName}</span>
                 <span className="checkin-type-count">{locs.length} local(is)</span>
               </div>
-              <div className="checkin-list-wrapper">
+              <div className="checkin-list-wrapper no-print">
                 <table className="checkin-list-table">
                   <thead>
                     <tr>
@@ -3880,6 +3872,24 @@ function App() {
                     })}
                   </tbody>
                 </table>
+              </div>
+              <div className="checkin-print-cards print-only">
+                {locs.map((loc) => {
+                  const state = checkinChecked[loc.locationKey] || {};
+                  const isChecked = !!state.checked;
+                  const clientLabel = (loc.clients || []).filter(c => c).join(' e ');
+                  return (
+                    <div key={loc.locationKey} className={`checkin-print-card${isChecked ? ' checked' : ''}`}>
+                      <div className="checkin-print-checkbox">{isChecked ? '✓' : ''}</div>
+                      <div className="checkin-print-card-body">
+                        <div className="checkin-print-card-name">
+                          {loc.locationName}{clientLabel ? ` (${clientLabel})` : ''}
+                        </div>
+                        {loc.address && <div className="checkin-print-card-addr">{loc.address}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ));
