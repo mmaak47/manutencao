@@ -3572,16 +3572,21 @@ function normalizeClientList(clients) {
   return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
+function normalizeCity(city) {
+  // Strip trailing state suffix like "/PR", "/SP", etc., and normalize whitespace
+  return String(city || '').trim().replace(/\s*\/\s*[A-Z]{2}$/i, '').trim();
+}
+
 function extractCityFromAddress(address) {
   const raw = String(address || '').trim();
   if (!raw) return '';
 
   const cityUfMatch = raw.match(/,\s*([^,\/]+)\s*\/\s*[A-Z]{2}\b/i);
-  if (cityUfMatch) return cityUfMatch[1].trim();
+  if (cityUfMatch) return normalizeCity(cityUfMatch[1].trim());
 
   const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
-  if (parts.length >= 2) return parts[parts.length - 2];
-  return parts[0] || '';
+  const candidate = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || '');
+  return normalizeCity(candidate);
 }
 
 function isStaticLocation(locationName, locationType) {
@@ -3594,7 +3599,7 @@ function normalizeCheckinLocations(locations) {
   for (const loc of (Array.isArray(locations) ? locations : [])) {
     const locationName = String(loc?.locationName || '').trim();
     const locationType = String(loc?.locationType || 'Sem categoria').trim() || 'Sem categoria';
-    const city = String(loc?.city || '').trim();
+    const city = normalizeCity(String(loc?.city || '').trim());
     if (!locationName) continue;
     if (isStaticLocation(locationName, locationType)) continue;
 
@@ -3789,7 +3794,7 @@ app.post('/checkin/locations', authenticateToken, requireAdmin, async (req, res)
   try {
     const locationName = String(req.body?.locationName || '').trim();
     const locationType = String(req.body?.locationType || '').trim() || 'Sem categoria';
-    const city = String(req.body?.city || '').trim();
+    const city = normalizeCity(String(req.body?.city || '').trim());
     const clients = normalizeClientList(req.body?.clients || []);
 
     if (!locationName) {
