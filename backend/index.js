@@ -3509,7 +3509,16 @@ function isLikelyClientName(name) {
     lowered.includes('cliente":') ||
     lowered.includes('cliente:') ||
     lowered.includes('campanha') ||
-    lowered.includes('json')
+    lowered.includes('json') ||
+    lowered.includes('monitor') ||
+    lowered.includes('tela') ||
+    lowered.includes('londrina') ||
+    lowered.includes('maringa') ||
+    lowered.includes('maringá') ||
+    lowered.includes('indoor') ||
+    lowered.includes('outdoor') ||
+    lowered.includes('painel led') ||
+    /\bfidelidade\d+\b/.test(lowered)
   ) {
     return false;
   }
@@ -3579,6 +3588,21 @@ function parseMonitorClients(html) {
   while ((m = jsonClientField.exec(body)) !== null) {
     const name = normalizeClientName(m[1]);
     if (isLikelyClientName(name)) clients.add(name);
+  }
+
+  // Strategy 5: media/group title fields often contain advertiser names.
+  const jsonTitleField = /"(?:nome_grupo|grupo_nome|nome|titulo|title)"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/gi;
+  while ((m = jsonTitleField.exec(body)) !== null) {
+    const idx = Math.max(0, m.index - 120);
+    const ctx = body.slice(idx, Math.min(body.length, m.index + 180)).toLowerCase();
+    if (!/(midia|mídia|grupo|campanha|playlist|futuro|template|agendado)/.test(ctx)) continue;
+
+    const raw = normalizeClientName(m[1]).replace(/\s*\|.*$/, '').trim();
+    if (!raw) continue;
+    raw.split(/\s*&\s*|\s*\/\s*/).forEach((part) => {
+      const name = normalizeClientName(part);
+      if (isLikelyClientName(name)) clients.add(name);
+    });
   }
 
   return [...clients].filter(isLikelyClientName);
