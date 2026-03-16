@@ -3470,7 +3470,6 @@ app.listen(port, () => console.log(`API listening on ${port}`));
 // In-memory client cache: { [originId]: { clients: string[], updatedAt: string } }
 const checkinClientsCache = {};
 const CHECKIN_CLIENT_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
-const CHECKIN_MAX_CLIENT_PROBES_PER_LOCATION = 10;
 
 function decodeHtmlEntities(text) {
   let value = String(text || '');
@@ -3573,6 +3572,13 @@ function parseMonitorClients(html) {
   const grupoLink = /href="[^"]*\/grupos\/[^"]*"[^>]*>([^<]{2,80})</gi;
   while ((m = grupoLink.exec(body)) !== null) {
     extractClientFromGroupName(m[1], clients);
+  }
+
+  // Strategy 4: parse serialized payload fields often present in the page scripts.
+  const jsonClientField = /"(?:cliente|anunciante)"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/gi;
+  while ((m = jsonClientField.exec(body)) !== null) {
+    const name = normalizeClientName(m[1]);
+    if (isLikelyClientName(name)) clients.add(name);
   }
 
   return [...clients].filter(isLikelyClientName);
@@ -3898,6 +3904,9 @@ function getCheckinSnapshotStatus() {
 }
 
 async function executeCheckinSnapshotJob() {
+  // Start every run from fresh scrape results to avoid stale client lists.
+  Object.keys(checkinClientsCache).forEach((k) => { delete checkinClientsCache[k]; });
+
   checkinSnapshotJob.running = true;
   checkinSnapshotJob.startedAt = new Date().toISOString();
   checkinSnapshotJob.finishedAt = null;
@@ -3961,7 +3970,6 @@ async function executeCheckinSnapshotJob() {
         if (!s.originId || seenOriginIds.has(s.originId)) continue;
         seenOriginIds.add(s.originId);
         uniqueOriginScreens.push(s);
-        if (uniqueOriginScreens.length >= CHECKIN_MAX_CLIENT_PROBES_PER_LOCATION) break;
       }
 
       for (const s of uniqueOriginScreens) {
