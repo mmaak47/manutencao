@@ -114,7 +114,7 @@ function App() {
   const [checkinTypeFilter, setCheckinTypeFilter] = useState('all');
   const [showCheckinAddModal, setShowCheckinAddModal] = useState(false);
   const [checkinEditingKey, setCheckinEditingKey] = useState(null);
-  const [checkinNewLocation, setCheckinNewLocation] = useState({ locationName: '', locationType: '', city: '', operatingHours: '', clientsText: '' });
+  const [checkinNewLocation, setCheckinNewLocation] = useState({ locationName: '', locationType: '', city: '', address: '', operatingHours: '', clientsText: '' });
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(30);
@@ -686,6 +686,7 @@ function App() {
         locationName: checkinNewLocation.locationName,
         locationType: checkinNewLocation.locationType,
         city: checkinNewLocation.city,
+        address: checkinNewLocation.address,
         operatingHours: checkinNewLocation.operatingHours,
         clients
       };
@@ -698,7 +699,7 @@ function App() {
 
       setShowCheckinAddModal(false);
       setCheckinEditingKey(null);
-      setCheckinNewLocation({ locationName: '', locationType: '', city: '', operatingHours: '', clientsText: '' });
+      setCheckinNewLocation({ locationName: '', locationType: '', city: '', address: '', operatingHours: '', clientsText: '' });
       await fetchCheckinReport();
       setAppAlert({ open: true, message: checkinEditingKey ? 'Local atualizado com sucesso' : 'Local adicionado com sucesso', type: 'success' });
     } catch (err) {
@@ -714,6 +715,7 @@ function App() {
       locationName: loc?.locationName || '',
       locationType: loc?.locationType || '',
       city: loc?.city || '',
+      address: loc?.address || '',
       operatingHours: loc?.operatingHours || '',
       clientsText
     });
@@ -3751,7 +3753,7 @@ function App() {
                 className="btn-secondary"
                 onClick={() => {
                   setCheckinEditingKey(null);
-                  setCheckinNewLocation({ locationName: '', locationType: '', city: '', operatingHours: '', clientsText: '' });
+                  setCheckinNewLocation({ locationName: '', locationType: '', city: '', address: '', operatingHours: '', clientsText: '' });
                   setShowCheckinAddModal(true);
                 }}
               >
@@ -3817,10 +3819,10 @@ function App() {
                     <tr>
                       <th>OK</th>
                       <th>Local</th>
+                      <th>Endereço</th>
                       <th>Cidade</th>
                       <th>Categoria</th>
                       <th>Horário</th>
-                      <th>Clientes</th>
                       {currentUser?.role === 'admin' && <th className="no-print">Ações</th>}
                     </tr>
                   </thead>
@@ -3828,7 +3830,6 @@ function App() {
                     {locs.map((loc) => {
                       const state = checkinChecked[loc.locationKey] || {};
                       const isChecked = !!state.checked;
-                      const clients = Array.isArray(loc.clients) ? loc.clients : [];
 
                       return (
                         <tr key={loc.locationKey} className={isChecked ? 'checked' : ''}>
@@ -3851,16 +3852,10 @@ function App() {
                               <div className="checkin-list-checked-at">Visitado às {new Date(state.checkedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
                             )}
                           </td>
+                          <td>{loc.address || '-'}</td>
                           <td>{loc.city || '-'}</td>
                           <td>{loc.locationType || '-'}</td>
                           <td>{loc.operatingHours || '-'}</td>
-                          <td>
-                            {clients.length > 0 ? (
-                              <div className="checkin-clients">
-                                {clients.map((c) => <span key={c} className="checkin-client-tag">{c}</span>)}
-                              </div>
-                            ) : '-'}
-                          </td>
                           {currentUser?.role === 'admin' && (
                             <td className="no-print">
                               <button className="btn-icon" title="Editar local" onClick={() => editCheckinLocation(loc)}>
@@ -3910,6 +3905,12 @@ function App() {
                   placeholder="Cidade"
                   value={checkinNewLocation.city}
                   onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, city: e.target.value }))}
+                />
+                <input
+                  type="text"
+                  placeholder="Endereço"
+                  value={checkinNewLocation.address}
+                  onChange={(e) => setCheckinNewLocation((prev) => ({ ...prev, address: e.target.value }))}
                 />
                 <input
                   type="text"

@@ -3823,6 +3823,7 @@ function normalizeCheckinLocations(locations) {
     const locationName = String(loc?.locationName || '').trim();
     const locationType = normalizeLocationType(loc?.locationType);
     const city = normalizeCity(String(loc?.city || '').trim());
+    const address = String(loc?.address || '').trim();
     const operatingHours = String(loc?.operatingHours || '').trim();
     if (!locationName) continue;
     if (isStaticLocation(locationName, locationType)) continue;
@@ -3831,12 +3832,13 @@ function normalizeCheckinLocations(locations) {
     const clients = normalizeClientList(loc?.clients || []);
 
     if (!merged.has(locationKey)) {
-      merged.set(locationKey, { locationKey, locationName, locationType, city, clients, operatingHours });
+      merged.set(locationKey, { locationKey, locationName, locationType, city, address, clients, operatingHours });
       continue;
     }
 
     const existing = merged.get(locationKey);
     existing.clients = normalizeClientList([...(existing.clients || []), ...clients]);
+    if (!existing.address && address) existing.address = address;
     if (!existing.operatingHours && operatingHours) existing.operatingHours = operatingHours;
   }
 
@@ -3971,6 +3973,14 @@ async function executeCheckinSnapshotJob() {
   checkinSnapshotJob.updatedAt = null;
 
   try {
+    const { locations: storedLocations } = await loadStoredCheckinLocations();
+    const manualClientsByGroup = new Map();
+    for (const loc of storedLocations) {
+      const key = buildCheckinLocationGroupKey(loc.locationName, loc.address || '');
+      if (!key) continue;
+      manualClientsByGroup.set(key, normalizeClientList(loc.clients || []));
+    }
+
     const screens = await Screen.findAll({
       where: { originId: { [Op.not]: null } },
       attributes: ['id', 'name', 'location', 'address', 'originId', 'operatingHoursStart', 'operatingHoursEnd', 'operatingDays'],
@@ -3998,7 +4008,8 @@ async function executeCheckinSnapshotJob() {
       const locationName = normalizeCheckinLocationName(primary?.location || '');
       checkinSnapshotJob.currentLocation = locationName;
       checkinSnapshotJob.message = `Coletando ${checkinSnapshotJob.processedLocations + 1}/${grouped.size}: ${locationName}`;
-      const city = extractCityFromAddress(primary?.address);
+      const address = String(primary?.address || '').trim();
+      const city = extractCityFromAddress(address);
       const hoursSource = locScreens.find((s) => s.operatingHoursStart || s.operatingHoursEnd || s.operatingDays) || primary;
       const operatingHours = formatOperatingHours(hoursSource);
 
@@ -4016,34 +4027,16 @@ async function executeCheckinSnapshotJob() {
         continue;
       }
 
-      const clientsSet = new Set();
-      const uniqueOriginScreens = [];
-      const seenOriginIds = new Set();
-      for (const s of locScreens) {
-        if (!s.originId || seenOriginIds.has(s.originId)) continue;
-        seenOriginIds.add(s.originId);
-        uniqueOriginScreens.push(s);
-      }
-
-      for (const s of uniqueOriginScreens) {
-        if (!s.originId) continue;
-
-        let clients = getCachedCheckinClients(s.originId);
-        if (!clients) {
-          clients = await scrapeCheckinClients(s.originId);
-          checkinClientsCache[s.originId] = { clients, updatedAt: new Date().toISOString() };
-        }
-
-        for (const c of clients) clientsSet.add(c);
-      }
+      const manualClients = manualClientsByGroup.get(buildCheckinLocationGroupKey(locationName, address)) || [];
 
       locations.push({
         locationKey: normalizeLocationKey(locationName, locationType, city),
         locationName,
         locationType,
         city,
+        address,
         operatingHours,
-        clients: normalizeClientList([...clientsSet])
+        clients: normalizeClientList(manualClients)
       });
 
       checkinSnapshotJob.processedLocations += 1;
@@ -4123,6 +4116,7 @@ app.post('/checkin/locations', authenticateToken, requireAdmin, async (req, res)
     const locationName = String(req.body?.locationName || '').trim();
     const locationType = normalizeLocationType(req.body?.locationType);
     const city = normalizeCity(String(req.body?.city || '').trim());
+    const address = String(req.body?.address || '').trim();
     const operatingHours = String(req.body?.operatingHours || '').trim();
     const clients = normalizeClientList(req.body?.clients || []);
 
@@ -4142,7 +4136,7 @@ app.post('/checkin/locations', authenticateToken, requireAdmin, async (req, res)
 
     const saved = await saveStoredCheckinLocations(cfg, [
       ...locations,
-      { locationKey, locationName, locationType, city, operatingHours, clients }
+      { locationKey, locationName, locationType, city, address, operatingHours, clients }
     ]);
 
     res.json({ success: true, locations: saved.locations, updatedAt: saved.updatedAt });
@@ -4160,6 +4154,7 @@ app.put('/checkin/locations/:locationKey', authenticateToken, requireAdmin, asyn
     const locationName = String(req.body?.locationName || '').trim();
     const locationType = normalizeLocationType(req.body?.locationType);
     const city = normalizeCity(String(req.body?.city || '').trim());
+    const address = String(req.body?.address || '').trim();
     const operatingHours = String(req.body?.operatingHours || '').trim();
     const clients = normalizeClientList(req.body?.clients || []);
 
@@ -4181,7 +4176,7 @@ app.put('/checkin/locations/:locationKey', authenticateToken, requireAdmin, asyn
     }
 
     const next = [...locations];
-    next[idx] = { locationKey: newKey, locationName, locationType, city, operatingHours, clients };
+    next[idx] = { locationKey: newKey, locationName, locationType, city, address, operatingHours, clients };
 
     const saved = await saveStoredCheckinLocations(cfg, next);
     res.json({ success: true, locationKey: newKey, locations: saved.locations, updatedAt: saved.updatedAt });
