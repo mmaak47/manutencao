@@ -17,7 +17,9 @@ const NotificationConfig = sequelize.define('NotificationConfig', {
   notifyOnOffline4h: { type: DataTypes.BOOLEAN, defaultValue: true },
   notifyOnOscillation: { type: DataTypes.BOOLEAN, defaultValue: true },
   // Technician contacts (JSON: [{ name, phone }])
-  technicianContacts: { type: DataTypes.TEXT, allowNull: true, defaultValue: '[]' }
+  technicianContacts: { type: DataTypes.TEXT, allowNull: true, defaultValue: '[]' },
+  // Checkin location type rules (JSON: [{ keyword, type }])
+  checkinLocationTypes: { type: DataTypes.TEXT, allowNull: true }
 }, { timestamps: true, tableName: 'notification_configs' });
 
 module.exports = NotificationConfig;

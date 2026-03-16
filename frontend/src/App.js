@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { FiMonitor, FiCheckCircle, FiAlertCircle, FiMinusCircle, FiPlus, FiSearch, FiClock, FiLogOut, FiUserPlus, FiPhone, FiTrash2, FiChevronDown, FiChevronUp, FiKey, FiBarChart2, FiFileText, FiPrinter, FiDatabase, FiDownload, FiSettings, FiMenu, FiRefreshCw, FiEdit, FiEye, FiEyeOff, FiStar, FiCalendar, FiMapPin, FiPackage, FiTag, FiUser, FiTool, FiChevronLeft, FiChevronRight, FiMoon, FiSun, FiClipboard, FiZap, FiTrendingUp, FiActivity, FiBell, FiSend, FiToggleLeft, FiToggleRight, FiDollarSign, FiUserCheck } from 'react-icons/fi';
+import { FiMonitor, FiCheckCircle, FiAlertCircle, FiMinusCircle, FiPlus, FiSearch, FiClock, FiLogOut, FiUserPlus, FiPhone, FiTrash2, FiChevronDown, FiChevronUp, FiKey, FiBarChart2, FiFileText, FiPrinter, FiDatabase, FiDownload, FiSettings, FiMenu, FiRefreshCw, FiEdit, FiEye, FiEyeOff, FiStar, FiCalendar, FiMapPin, FiPackage, FiTag, FiUser, FiTool, FiChevronLeft, FiChevronRight, FiMoon, FiSun, FiClipboard, FiZap, FiTrendingUp, FiActivity, FiBell, FiSend, FiToggleLeft, FiToggleRight, FiDollarSign, FiUserCheck, FiCamera } from 'react-icons/fi';
 import logo from './assets/logo.png';
 import logoBlack from './assets/logo-black.png';
 import Analytics from './Analytics';
@@ -104,6 +104,16 @@ function App() {
   const [showContactModal, setShowContactModal] = useState(false);
   const [editingContact, setEditingContact] = useState(null);
   const [contactSearch, setContactSearch] = useState('');
+  // Checkin fotográfico
+  const [checkinData, setCheckinData] = useState(null);
+  const [checkinLoading, setCheckinLoading] = useState(false);
+  const [checkinSyncing, setCheckinSyncing] = useState(false);
+  const [checkinChecked, setCheckinChecked] = useState({});
+  const [checkinCityFilter, setCheckinCityFilter] = useState('all');
+  const [checkinTypeFilter, setCheckinTypeFilter] = useState('all');
+  const [checkinRules, setCheckinRules] = useState([]);
+  const [showCheckinConfig, setShowCheckinConfig] = useState(false);
+  const [checkinRuleEdit, setCheckinRuleEdit] = useState([]);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(30);
@@ -452,6 +462,7 @@ function App() {
     if (activePage === 'analytics-pro') { fetchPatterns(); fetchTicketStats(); fetchLoopAudits(); }
     if (activePage === 'notifications') { fetchNotifConfig(); }
     if (activePage === 'approvals') { fetchPendingRegistrations(regStatusFilter); fetchAdminUsers(); fetchUsers(); }
+    if (activePage === 'checkin') { fetchCheckinReport(); if (currentUser?.role === 'admin') fetchCheckinConfig(); }
   }, [activePage, authToken, calendarMonth, calendarYear]);
 
   useEffect(() => {
@@ -583,6 +594,57 @@ function App() {
       setContacts(res.data);
     } catch (err) {
       console.error('Error fetching contacts:', err);
+    }
+  };
+
+  const fetchCheckinReport = async () => {
+    if (!authToken) return;
+    setCheckinLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/checkin/report`, authConfig);
+      setCheckinData(res.data);
+    } catch (err) {
+      console.error('Error fetching checkin report:', err);
+    } finally {
+      setCheckinLoading(false);
+    }
+  };
+
+  const syncCheckinClients = async () => {
+    if (!authToken || checkinSyncing) return;
+    setCheckinSyncing(true);
+    try {
+      const res = await axios.post(`${API_BASE}/checkin/sync`, {}, authConfig);
+      setAppAlert({ open: true, message: res.data.message || 'Sincronização iniciada!', type: 'success' });
+      setTimeout(() => fetchCheckinReport(), 5000);
+      setTimeout(() => fetchCheckinReport(), 30000);
+    } catch (err) {
+      setAppAlert({ open: true, message: 'Erro ao sincronizar clientes', type: 'error' });
+    } finally {
+      setCheckinSyncing(false);
+    }
+  };
+
+  const fetchCheckinConfig = async () => {
+    if (!authToken) return;
+    try {
+      const res = await axios.get(`${API_BASE}/checkin/config`, authConfig);
+      setCheckinRules(res.data.rules || []);
+      setCheckinRuleEdit(res.data.rules || []);
+    } catch (err) {
+      console.error('Error fetching checkin config:', err);
+    }
+  };
+
+  const saveCheckinConfig = async () => {
+    try {
+      await axios.put(`${API_BASE}/checkin/config`, { rules: checkinRuleEdit }, authConfig);
+      setCheckinRules(checkinRuleEdit);
+      setShowCheckinConfig(false);
+      fetchCheckinReport();
+      setAppAlert({ open: true, message: 'Configuração salva!', type: 'success' });
+    } catch (err) {
+      setAppAlert({ open: true, message: 'Erro ao salvar configuração', type: 'error' });
     }
   };
 
@@ -2581,6 +2643,11 @@ function App() {
             <FiPhone size={18} /> Contatos
             <span className="nav-badge">{contactsList.length}</span>
           </button>
+          {currentUser?.role !== 'comercial' && (
+            <button className={`sidebar-item ${activePage === 'checkin' ? 'active' : ''}`} onClick={() => setActivePage('checkin')}>
+              <FiCamera size={18} /> Checkin Fotógrafico
+            </button>
+          )}
           <button className={`sidebar-item ${activePage === 'inventory' ? 'active' : ''}`} onClick={() => setActivePage('inventory')}>
             <FiPackage size={18} /> Estoque
             {parts.filter(p => p.quantity <= p.minQuantity).length > 0 && (
@@ -3576,6 +3643,192 @@ function App() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+      ) : activePage === 'checkin' ? (
+      <div className="checkin-page">
+        {/* --- Header --- */}
+        <div className="checkin-header no-print">
+          <div className="checkin-title">
+            <h3><FiCamera size={18} /> Checkin Fotográfico</h3>
+            <p>Marque os locais visitados e verifique os monitores.</p>
+          </div>
+          <div className="checkin-header-actions">
+            <button className="btn-secondary" onClick={syncCheckinClients} disabled={checkinSyncing}>
+              <FiRefreshCw size={14} className={checkinSyncing ? 'spinning' : ''} />
+              {checkinSyncing ? 'Sincronizando...' : 'Sincronizar Clientes'}
+            </button>
+            {currentUser?.role === 'admin' && (
+              <button className="btn-secondary" onClick={() => { setShowCheckinConfig(true); fetchCheckinConfig(); }}>
+                <FiSettings size={14} /> Tipos de Local
+              </button>
+            )}
+            <button className="btn-primary" onClick={() => window.print()}>
+              <FiPrinter size={14} /> Salvar PDF
+            </button>
+          </div>
+        </div>
+
+        {/* --- Filters --- */}
+        <div className="checkin-filters no-print">
+          <select value={checkinCityFilter} onChange={e => setCheckinCityFilter(e.target.value)}>
+            <option value="all">Todas as cidades</option>
+            {(checkinData?.cities || []).map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select value={checkinTypeFilter} onChange={e => setCheckinTypeFilter(e.target.value)}>
+            <option value="all">Todos os tipos</option>
+            {(checkinData?.types || []).map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <button className="btn-secondary" onClick={fetchCheckinReport} disabled={checkinLoading}>
+            <FiRefreshCw size={13} className={checkinLoading ? 'spinning' : ''} /> Atualizar
+          </button>
+        </div>
+
+        {/* --- Print header (only visible on print) --- */}
+        <div className="checkin-print-header print-only">
+          <h2>Checkin Fotográfico</h2>
+          <p>Data: {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+        </div>
+
+        {/* --- Content --- */}
+        {checkinLoading ? (
+          <div className="checkin-loading"><FiRefreshCw size={24} className="spinning" /> Carregando...</div>
+        ) : !checkinData ? (
+          <div className="checkin-empty"><FiCamera size={48} /><p>Nenhum dado disponível.</p></div>
+        ) : (() => {
+          const filtered = (checkinData.locations || []).filter(loc => {
+            if (checkinCityFilter !== 'all' && loc.city !== checkinCityFilter) return false;
+            if (checkinTypeFilter !== 'all' && loc.locationType !== checkinTypeFilter) return false;
+            return true;
+          });
+
+          if (filtered.length === 0) return (
+            <div className="checkin-empty"><FiSearch size={32} /><p>Nenhum local para os filtros selecionados.</p></div>
+          );
+
+          // Group by locationType
+          const byType = {};
+          for (const loc of filtered) {
+            if (!byType[loc.locationType]) byType[loc.locationType] = [];
+            byType[loc.locationType].push(loc);
+          }
+
+          return Object.entries(byType).sort(([a], [b]) => a.localeCompare(b)).map(([typeName, locs]) => (
+            <div key={typeName} className="checkin-type-group">
+              <div className="checkin-type-header">
+                <span className="checkin-type-badge">{typeName}</span>
+                <span className="checkin-type-count">{locs.length} local(is)</span>
+              </div>
+              <div className="checkin-locations-grid">
+                {locs.map(loc => {
+                  const state = checkinChecked[loc.locationName] || {};
+                  const isChecked = !!state.checked;
+                  const allClients = [...new Set(loc.screens.flatMap(s => s.clients || []))];
+                  const anyOffline = loc.screens.some(s => s.status === 'offline');
+                  const anyOscillating = loc.screens.some(s => s.status === 'oscillating');
+                  return (
+                    <div key={loc.locationName} className={`checkin-location-card${isChecked ? ' checked' : ''}${anyOffline ? ' has-offline' : ''}`}>
+                      <div className="checkin-location-top">
+                        <label className="checkin-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={e => setCheckinChecked(prev => ({
+                              ...prev,
+                              [loc.locationName]: {
+                                checked: e.target.checked,
+                                checkedAt: e.target.checked ? new Date().toISOString() : null
+                              }
+                            }))}
+                          />
+                          <span className="checkin-location-name">{loc.locationName}</span>
+                        </label>
+                        {loc.city && <span className="checkin-city-tag">{loc.city}</span>}
+                      </div>
+
+                      {isChecked && state.checkedAt && (
+                        <div className="checkin-checked-at">
+                          ✓ Visitado às {new Date(state.checkedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      )}
+
+                      {allClients.length > 0 && (
+                        <div className="checkin-clients">
+                          <span className="checkin-clients-label">Clientes:</span>
+                          {allClients.map(c => <span key={c} className="checkin-client-tag">{c}</span>)}
+                        </div>
+                      )}
+
+                      <div className="checkin-screens">
+                        {loc.screens.map(s => (
+                          <span key={s.id} className={`checkin-screen-pill status-${s.status || 'unknown'}`} title={s.name}>
+                            {s.status === 'online' ? '●' : s.status === 'offline' ? '○' : '◑'} {s.name}
+                          </span>
+                        ))}
+                      </div>
+
+                      {(anyOffline || anyOscillating) && (
+                        <div className="checkin-alert-row">
+                          {anyOffline && <span className="checkin-alert offline">⚠ Monitor offline</span>}
+                          {anyOscillating && <span className="checkin-alert oscillating">⚡ Oscilando</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ));
+        })()}
+
+        {/* --- Summary footer (print) --- */}
+        <div className="checkin-summary print-only">
+          <p>Total visitados: {Object.values(checkinChecked).filter(s => s.checked).length} / {(checkinData?.locations || []).length}</p>
+        </div>
+
+        {/* --- Config modal (admin) --- */}
+        {showCheckinConfig && (
+          <div className="modal-overlay" onClick={() => setShowCheckinConfig(false)}>
+            <div className="modal-content" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Tipos de Local</h2>
+                <button className="modal-close" onClick={() => setShowCheckinConfig(false)}>×</button>
+              </div>
+              <p style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
+                Configure as regras de classificação. A primeira regra que coincidir com o nome do local será usada.
+              </p>
+              <div className="checkin-rules-list">
+                {checkinRuleEdit.map((rule, i) => (
+                  <div key={i} className="checkin-rule-row">
+                    <input
+                      type="text"
+                      placeholder="Palavra-chave"
+                      value={rule.keyword}
+                      onChange={e => setCheckinRuleEdit(prev => prev.map((r, j) => j === i ? { ...r, keyword: e.target.value } : r))}
+                    />
+                    <span>→</span>
+                    <input
+                      type="text"
+                      placeholder="Tipo"
+                      value={rule.type}
+                      onChange={e => setCheckinRuleEdit(prev => prev.map((r, j) => j === i ? { ...r, type: e.target.value } : r))}
+                    />
+                    <button className="btn-icon" onClick={() => setCheckinRuleEdit(prev => prev.filter((_, j) => j !== i))}>
+                      <FiTrash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button className="btn-secondary" style={{ marginTop: 10 }}
+                onClick={() => setCheckinRuleEdit(prev => [...prev, { keyword: '', type: '' }])}>
+                <FiPlus size={13} /> Adicionar regra
+              </button>
+              <div className="modal-footer">
+                <button className="btn-secondary" onClick={() => setShowCheckinConfig(false)}>Cancelar</button>
+                <button className="btn-primary" onClick={saveCheckinConfig}>Salvar</button>
+              </div>
+            </div>
           </div>
         )}
       </div>

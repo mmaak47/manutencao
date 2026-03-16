@@ -442,6 +442,7 @@ sequelize.sync().then(async () => {
   await ensureUserColumns();
   await ensureTicketColumns();
   await ensureContractColumns();
+  await ensureNotificationConfigColumns();
   console.log('Database synced');
   bootstrapAdmin();
   setTimeout(() => {
@@ -747,6 +748,21 @@ async function ensureContractColumns() {
     await sequelize.query("UPDATE contracts SET sales_follow_up_status = 'pending' WHERE sales_follow_up_status IS NULL OR sales_follow_up_status = ''");
   } catch (err) {
     console.error('Failed to ensure contracts columns:', err.message);
+  }
+}
+
+async function ensureNotificationConfigColumns() {
+  try {
+    const queryInterface = sequelize.getQueryInterface();
+    const tableDefinition = await queryInterface.describeTable('notification_configs');
+    if (!tableDefinition.checkinLocationTypes) {
+      await queryInterface.addColumn('notification_configs', 'checkinLocationTypes', {
+        type: DataTypes.TEXT,
+        allowNull: true
+      });
+    }
+  } catch (err) {
+    console.error('Failed to ensure notification_configs columns:', err.message);
   }
 }
 
@@ -3437,6 +3453,207 @@ app.post('/contracts/:id/notify', authenticateToken, requireAdmin, async (req, r
 });
 
 app.listen(port, () => console.log(`API listening on ${port}`));
+
+// ===== CHECKIN PHOTO REPORT =====
+// In-memory client cache: { [originId]: { clients: string[], updatedAt: string } }
+const checkinClientsCache = {};
+
+// Parse group/client names from the campanhas-monitor HTML page
+function parseMonitorClients(html) {
+  const body = String(html || '');
+  const clients = new Set();
+
+  // Strategy 1: Text blocks matching [CODE] ClientName pattern in title/data attributes
+  const attrBracket = /(?:title|data-nome|data-group)="([^"]*\[[A-Z0-9]+\][^"]*)"/gi;
+  let m;
+  while ((m = attrBracket.exec(body)) !== null) {
+    extractClientFromGroupName(m[1], clients);
+  }
+
+  // Strategy 2: Raw text inside HTML that starts with [CODE]
+  const rawBracket = /\[([A-Z0-9]{3,})\]\s*([^<|\n"]{2,80})/g;
+  while ((m = rawBracket.exec(body)) !== null) {
+    const raw = m[2].trim().replace(/\s*\|.*$/, '').trim();
+    if (raw && raw.length > 2) {
+      raw.split(/\s*&\s*|\s*\/\s*/).forEach(c => {
+        const name = c.trim();
+        if (name && name.length > 2 && name.length < 80) clients.add(name);
+      });
+    }
+  }
+
+  // Strategy 3: anchor links to /grupos/ - extract their visible text
+  const grupoLink = /href="[^"]*\/grupos\/[^"]*"[^>]*>([^<]{2,80})</gi;
+  while ((m = grupoLink.exec(body)) !== null) {
+    extractClientFromGroupName(m[1], clients);
+  }
+
+  return [...clients].filter(c => c.length > 2 && c.length < 100);
+}
+
+function extractClientFromGroupName(raw, set) {
+  // Strip [CODE] prefix
+  const withoutCode = String(raw || '').replace(/^\[([A-Z0-9]+)\]\s*/, '').trim();
+  // Take portion before | (category marker)
+  const beforePipe = withoutCode.split('|')[0].trim();
+  if (!beforePipe || beforePipe.length < 2) return;
+  // Split by & or / to handle multiple clients in one group
+  beforePipe.split(/\s*&\s*|\s*\/\s*/).forEach(c => {
+    const name = c.trim();
+    if (name && name.length > 2 && name.length < 80) set.add(name);
+  });
+}
+
+async function scrapeCheckinClients(originId) {
+  if (!originId || isOriginScrapeExcluded(originId)) return [];
+  try {
+    let resp = await axios.get(`${ORIGIN_BASE}/premium/campanhas-monitor/id/${originId}`, {
+      headers: { Cookie: originCookies },
+      timeout: 20000,
+      httpsAgent: originHttpsAgent,
+      validateStatus: () => true
+    });
+    if (!resp.data || String(resp.data).includes('action="/login/verifica"')) {
+      const ok = await originLogin();
+      if (!ok) return [];
+      resp = await axios.get(`${ORIGIN_BASE}/premium/campanhas-monitor/id/${originId}`, {
+        headers: { Cookie: originCookies },
+        timeout: 20000,
+        httpsAgent: originHttpsAgent,
+        validateStatus: () => true
+      });
+    }
+    if (!resp.data || resp.status !== 200) return [];
+    return parseMonitorClients(resp.data);
+  } catch (err) {
+    console.warn(`checkin scrape [${originId}]: ${err.message}`);
+    return [];
+  }
+}
+
+// Default location type classification rules
+const DEFAULT_LOCATION_TYPE_RULES = [
+  { keyword: 'Posto', type: 'Painéis de LED - Postos' },
+  { keyword: 'Garden', type: 'Elevadores' },
+  { keyword: 'Palhano', type: 'Elevadores' },
+  { keyword: 'Tower', type: 'Elevadores' },
+  { keyword: 'Elevador', type: 'Elevadores' },
+  { keyword: 'Shopping', type: 'Painéis de LED - Shopping' }
+];
+
+let checkinLocationTypeRules = null; // loaded from NotificationConfig on first use
+
+async function getCheckinLocationTypeRules() {
+  if (checkinLocationTypeRules !== null) return checkinLocationTypeRules;
+  try {
+    const cfg = await NotificationConfig.findOne();
+    if (cfg && cfg.checkinLocationTypes) {
+      checkinLocationTypeRules = JSON.parse(cfg.checkinLocationTypes);
+      return checkinLocationTypeRules;
+    }
+  } catch (_) {}
+  checkinLocationTypeRules = DEFAULT_LOCATION_TYPE_RULES;
+  return checkinLocationTypeRules;
+}
+
+function classifyLocationType(locationName, rules) {
+  if (!locationName) return 'Outros';
+  const name = String(locationName).toLowerCase();
+  for (const rule of (rules || [])) {
+    if (name.includes(String(rule.keyword || '').toLowerCase())) return rule.type;
+  }
+  return 'Outros';
+}
+
+// GET /checkin/report — structured location checklist with clients (from cache)
+app.get('/checkin/report', authenticateToken, async (req, res) => {
+  try {
+    const rules = await getCheckinLocationTypeRules();
+    const screens = await Screen.findAll({
+      where: { originId: { [Op.not]: null } },
+      attributes: ['id', 'name', 'location', 'address', 'status', 'originId'],
+      order: [['location', 'ASC'], ['name', 'ASC']]
+    });
+
+    // Group by location
+    const byLocation = {};
+    for (const s of screens) {
+      const locName = (s.location || 'Sem Local').trim();
+      if (!byLocation[locName]) byLocation[locName] = [];
+      byLocation[locName].push(s);
+    }
+
+    const locations = Object.entries(byLocation).map(([locationName, locScreens]) => {
+      const city = locScreens[0]?.address || '';
+      const locationType = classifyLocationType(locationName, rules);
+      const screensOut = locScreens.map(s => {
+        const cached = checkinClientsCache[s.originId];
+        return {
+          id: s.id,
+          name: s.name,
+          originId: s.originId,
+          status: s.status,
+          clients: cached ? cached.clients : [],
+          clientsUpdatedAt: cached ? cached.updatedAt : null
+        };
+      });
+      return { locationName, locationType, city, screens: screensOut };
+    });
+
+    const cities = [...new Set(locations.map(l => l.city).filter(Boolean))].sort();
+    const types = [...new Set(locations.map(l => l.locationType))].sort();
+
+    res.json({ locations, cities, types, rules });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /checkin/sync — scrape clients for all monitors (admin + technician)
+app.post('/checkin/sync', authenticateToken, async (req, res) => {
+  try {
+    const screens = await Screen.findAll({
+      where: { originId: { [Op.not]: null } },
+      attributes: ['id', 'originId', 'name']
+    });
+
+    // Return immediately, scrape async
+    res.json({ success: true, message: `Sincronizando ${screens.length} monitores em background...`, total: screens.length });
+
+    let done = 0;
+    for (const s of screens) {
+      const clients = await scrapeCheckinClients(s.originId);
+      checkinClientsCache[s.originId] = { clients, updatedAt: new Date().toISOString() };
+      done++;
+      if (done % 10 === 0) console.log(`checkin sync: ${done}/${screens.length}`);
+    }
+    console.log(`checkin sync complete: ${done} monitores, cache updated`);
+  } catch (err) {
+    console.error('checkin sync error:', err.message);
+  }
+});
+
+// GET /checkin/config — returns location type rules (admin)
+app.get('/checkin/config', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const rules = await getCheckinLocationTypeRules();
+    res.json({ rules });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /checkin/config — save location type rules (admin)
+app.put('/checkin/config', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const rules = req.body.rules;
+    if (!Array.isArray(rules)) return res.status(400).json({ error: 'rules deve ser um array' });
+    let cfg = await NotificationConfig.findOne();
+    if (!cfg) cfg = await NotificationConfig.create({});
+    await cfg.update({ checkinLocationTypes: JSON.stringify(rules) });
+    checkinLocationTypeRules = rules; // update in-memory
+    res.json({ success: true, rules });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 
 // Note: No local heartbeat interval — the origin system sync (every 2 min)
 // is the single source of truth for all screen statuses.
