@@ -3486,6 +3486,7 @@ function decodeHtmlEntities(text) {
 
 function normalizeClientName(rawName) {
   return decodeHtmlEntities(rawName)
+    .replace(/^\s*\[[A-Z0-9]+\]\s*/i, '')
     .replace(/\bamp;\b/gi, ' ')
     .replace(/^[;&\s]+/, '')
     .replace(/\s+/g, ' ')
@@ -3499,6 +3500,18 @@ function clientCanonicalKey(name) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+function areSimilarClientKeys(a, b) {
+  if (!a || !b || a === b) return false;
+  if (a.length < 6 || b.length < 6) return false;
+
+  // Common typo case: one key is almost a prefix of the other (ex: londrifrei / londrifreios)
+  if (a.startsWith(b) || b.startsWith(a)) {
+    return Math.abs(a.length - b.length) <= 3;
+  }
+
+  return false;
 }
 
 // Parse group/client names from the campanhas-monitor HTML page
@@ -3545,7 +3558,7 @@ function getCachedCheckinClients(originId) {
 
 function extractClientFromGroupName(raw, set) {
   // Strip [CODE] prefix
-  const withoutCode = normalizeClientName(String(raw || '').replace(/^\[([A-Z0-9]+)\]\s*/, '').trim());
+  const withoutCode = normalizeClientName(String(raw || ''));
   // Take portion before | (category marker)
   const beforePipe = withoutCode.split('|')[0].trim();
   if (!beforePipe || beforePipe.length < 2) return;
@@ -3617,6 +3630,28 @@ function normalizeClientList(clients) {
       canonical.set(key, name);
     }
   }
+
+  // Secondary merge for near-duplicate typo variants not caught by canonical normalization.
+  const keys = [...canonical.keys()].sort((a, b) => a.length - b.length);
+  const removed = new Set();
+  for (let i = 0; i < keys.length; i += 1) {
+    if (removed.has(keys[i])) continue;
+    for (let j = i + 1; j < keys.length; j += 1) {
+      if (removed.has(keys[j])) continue;
+      if (areSimilarClientKeys(keys[i], keys[j])) {
+        const keep = keys[i].length >= keys[j].length ? keys[i] : keys[j];
+        const drop = keep === keys[i] ? keys[j] : keys[i];
+        removed.add(drop);
+
+        const keepName = canonical.get(keep) || '';
+        const dropName = canonical.get(drop) || '';
+        if (dropName.length > keepName.length) canonical.set(keep, dropName);
+      }
+    }
+  }
+
+  for (const key of removed) canonical.delete(key);
+
   return [...canonical.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
