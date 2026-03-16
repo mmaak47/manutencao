@@ -3783,7 +3783,16 @@ function App() {
 
         <div className="checkin-print-header print-only">
           <h2>Checkin Fotográfico</h2>
-          <p>Data: {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+          <p>Gerado em: {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+          <p>
+            Filtros: Cidade {checkinCityFilter === 'all' ? 'Todas' : checkinCityFilter}
+            {' | '}
+            Categoria {checkinTypeFilter === 'all' ? 'Todas' : checkinTypeFilter}
+          </p>
+          <p>Total no snapshot: {(checkinData?.locations || []).length} local(is)</p>
+          {checkinData?.updatedAt && (
+            <p>Última coleta: {new Date(checkinData.updatedAt).toLocaleString('pt-BR')}</p>
+          )}
         </div>
 
         {checkinLoading ? (

@@ -4378,9 +4378,15 @@
 
 /* ===== PRINT STYLES ===== */
 @media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
   .no-print,
   .sidebar,
   .app-header,
+  .topbar,
   .checkin-header,
   .checkin-filters,
   .modal-overlay {
@@ -4391,7 +4397,7 @@
     display: block !important;
   }
 
-  body, .app-main, .main-content-area, .checkin-page {
+  body, .app-main, .main-content-area, .checkin-page, .page-content {
     background: #fff !important;
     color: #000 !important;
     padding: 0 !important;
@@ -4399,9 +4405,55 @@
     max-width: 100% !important;
   }
 
+  .checkin-print-header {
+    margin-bottom: 8mm;
+    padding-bottom: 4mm;
+    border-bottom: 1px solid #d1d5db;
+  }
+
+  .checkin-print-header h2 {
+    font-size: 16pt;
+    margin-bottom: 2mm;
+  }
+
+  .checkin-print-header p {
+    margin: 0;
+    font-size: 9.5pt;
+    color: #374151;
+    line-height: 1.35;
+  }
+
+  .checkin-type-group {
+    margin-bottom: 6mm;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .checkin-type-header {
+    margin-bottom: 2mm;
+    padding-bottom: 1mm;
+    border-bottom: 1px solid #d1d5db;
+  }
+
+  .checkin-type-badge {
+    background: #1e40af !important;
+    color: #fff !important;
+    font-size: 9pt;
+    padding: 2px 8px;
+  }
+
   .checkin-list-wrapper {
+    overflow: visible !important;
     border: 1px solid #d1d5db !important;
+    border-radius: 0 !important;
     background: #fff !important;
+  }
+
+  .checkin-list-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed;
+    border-collapse: collapse;
   }
 
   .checkin-list-table,
@@ -4411,26 +4463,69 @@
     color: #111827 !important;
   }
 
+  .checkin-list-table th,
+  .checkin-list-table td {
+    font-size: 8.8pt;
+    padding: 2.3mm 2.5mm;
+    line-height: 1.25;
+    word-break: break-word;
+  }
+
   .checkin-list-table thead th {
     background: #f3f4f6 !important;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+  }
+
+  .checkin-list-table tbody tr {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
   }
 
   .checkin-list-table tbody tr.checked {
     background: #ecfdf5 !important;
   }
 
-  .checkin-type-badge {
-    background: #1e40af !important;
+  .checkin-list-name {
+    font-size: 9pt;
+    font-weight: 700;
   }
 
-  .checkin-client-tag {
-    background: #dbeafe !important;
-    color: #1e40af !important;
+  .checkin-list-checked-at {
+    font-size: 7.8pt;
+    color: #065f46 !important;
   }
+
+  .checkin-list-table th:nth-child(1),
+  .checkin-list-table td:nth-child(1) { width: 5%; }
+
+  .checkin-list-table th:nth-child(2),
+  .checkin-list-table td:nth-child(2) { width: 24%; }
+
+  .checkin-list-table th:nth-child(3),
+  .checkin-list-table td:nth-child(3) { width: 24%; }
+
+  .checkin-list-table th:nth-child(4),
+  .checkin-list-table td:nth-child(4) { width: 10%; }
+
+  .checkin-list-table th:nth-child(5),
+  .checkin-list-table td:nth-child(5) { width: 11%; }
+
+  .checkin-list-table th:nth-child(6),
+  .checkin-list-table td:nth-child(6) { width: 14%; }
 
   .checkin-list-table td.no-print,
   .checkin-list-table th.no-print {
     display: none !important;
+  }
+
+  .checkin-summary {
+    margin-top: 6mm;
+    padding-top: 3mm;
+    border-top: 1px solid #d1d5db;
+    font-size: 9pt;
+    color: #374151;
   }
 }
 
