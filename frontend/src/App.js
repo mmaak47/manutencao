@@ -886,6 +886,7 @@ function App() {
   const saveTicket = async () => {
     try {
       if (!ticketForm.title) return showAlert('Título é obrigatório', 'warning');
+      if (!ticketForm.screenId) return showAlert('Selecione um display para o ticket entrar no workflow.', 'warning');
       if (editingTicket) {
         await axios.patch(`${API_BASE}/tickets/${editingTicket.id}`, ticketForm, authConfig);
         showAlert('Ticket atualizado!', 'success');
@@ -5551,9 +5552,10 @@ function App() {
                 <div className="form-group">
                   <label>Display</label>
                   <select value={ticketForm.screenId} onChange={(e) => setTicketForm(p => ({ ...p, screenId: e.target.value }))}>
-                    <option value="">Nenhum</option>
+                    <option value="">Selecione um display</option>
                     {screens.map(s => <option key={s.id} value={s.id}>{s.name} - {s.location}</option>)}
                   </select>
+                  <small className="form-helper-text">Obrigatorio para o ticket aparecer no workflow principal.</small>
                 </div>
                 <div className="form-group">
                   <label>Atribuir a</label>

@@ -2764,15 +2764,15 @@ app.post('/tickets', authenticateToken, async (req, res) => {
   try {
     const { screenId, title, description, category, priority, assignedTo, location, city, checklist, actualCost, timeSpentMinutes } = req.body;
     if (!title) return res.status(400).json({ error: 'Título é obrigatório' });
+    if (!screenId) return res.status(400).json({ error: 'Selecione um display para vincular o ticket ao workflow.' });
+    const linkedScreen = await Screen.findByPk(screenId);
+    if (!linkedScreen) return res.status(400).json({ error: 'Tela vinculada inválida' });
     
     // Auto-populate location from screen if not provided
     let finalLocation = location;
     let finalCity = city;
-    if (screenId && !location) {
-      const screen = await Screen.findByPk(screenId);
-      if (screen) {
-        finalLocation = screen.address || screen.location || location;
-      }
+    if (!location) {
+      finalLocation = linkedScreen.address || linkedScreen.location || location;
     }
     
     const ticket = await Ticket.create({
@@ -2835,15 +2835,13 @@ app.patch('/tickets/:id', authenticateToken, async (req, res) => {
 
     if (screenId !== undefined) {
       if (screenId === '' || screenId == null) {
-        updates.screenId = null;
-        nextScreenId = null;
-      } else {
-        const linkedScreen = await Screen.findByPk(screenId);
-        if (!linkedScreen) return res.status(400).json({ error: 'Tela vinculada inválida' });
-        updates.screenId = linkedScreen.id;
-        nextScreenId = linkedScreen.id;
-        if (location === undefined) updates.location = linkedScreen.address || linkedScreen.location || ticket.location || '';
+        return res.status(400).json({ error: 'Selecione um display para manter o ticket integrado ao workflow.' });
       }
+      const linkedScreen = await Screen.findByPk(screenId);
+      if (!linkedScreen) return res.status(400).json({ error: 'Tela vinculada inválida' });
+      updates.screenId = linkedScreen.id;
+      nextScreenId = linkedScreen.id;
+      if (location === undefined) updates.location = linkedScreen.address || linkedScreen.location || ticket.location || '';
     }
 
     if (status) {
