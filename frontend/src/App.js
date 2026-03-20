@@ -896,6 +896,7 @@ function App() {
       setShowTicketModal(false);
       setEditingTicket(null);
       setTicketForm(EMPTY_TICKET_FORM);
+      fetchScreens();
       fetchTickets();
       fetchTicketStats();
     } catch (err) { showAlert('Erro: ' + (err.response?.data?.error || err.message), 'error'); }
@@ -905,6 +906,7 @@ function App() {
     if (!window.confirm('Excluir este ticket?')) return;
     try {
       await axios.delete(`${API_BASE}/tickets/${id}`, authConfig);
+      fetchScreens();
       fetchTickets();
       fetchTicketStats();
     } catch (err) { showAlert('Erro ao excluir', 'error'); }
@@ -913,6 +915,7 @@ function App() {
   const updateTicketStatus = async (id, status) => {
     try {
       await axios.patch(`${API_BASE}/tickets/${id}`, { status }, authConfig);
+      fetchScreens();
       fetchTickets();
       fetchTicketStats();
     } catch (err) { showAlert('Erro ao atualizar', 'error'); }

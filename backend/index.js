@@ -218,6 +218,41 @@ function getTicketSlaHours(ticket) {
   return 48;
 }
 
+function deriveWorkflowStatusFromTickets(tickets) {
+  const statuses = tickets.map((ticket) => ticket.status);
+  if (statuses.some((status) => status === 'in_progress' || status === 'waiting_part')) return 'ontheway';
+  if (statuses.some((status) => status === 'open')) return 'todo';
+  if (statuses.some((status) => status === 'resolved' || status === 'closed')) return 'complete';
+  return 'none';
+}
+
+async function syncScreenWorkflowFromTickets(screenId) {
+  const normalizedScreenId = getPositiveInt(screenId, null);
+  if (!normalizedScreenId) return null;
+
+  const screen = await Screen.findByPk(normalizedScreenId);
+  if (!screen) return null;
+
+  const tickets = await Ticket.findAll({
+    where: { screenId: normalizedScreenId },
+    attributes: ['status']
+  });
+
+  const nextWorkflowStatus = deriveWorkflowStatusFromTickets(tickets);
+  if (screen.workflowStatus !== nextWorkflowStatus) {
+    await screen.update({ workflowStatus: nextWorkflowStatus });
+  }
+
+  return nextWorkflowStatus;
+}
+
+async function syncAllScreenWorkflowsFromTickets() {
+  const screens = await Screen.findAll({ attributes: ['id', 'workflowStatus'] });
+  for (const screen of screens) {
+    await syncScreenWorkflowFromTickets(screen.id);
+  }
+}
+
 function formatHoursDuration(hours) {
   if (!Number.isFinite(hours) || hours <= 0) return '0h';
   if (hours < 1) return `${Math.round(hours * 60)}min`;
@@ -443,6 +478,7 @@ sequelize.sync().then(async () => {
   await ensureTicketColumns();
   await ensureContractColumns();
   await ensureNotificationConfigColumns();
+  await syncAllScreenWorkflowsFromTickets();
   console.log('Database synced');
   bootstrapAdmin();
   setTimeout(() => {
@@ -2746,6 +2782,9 @@ app.post('/tickets', authenticateToken, async (req, res) => {
       actualCost: actualCost === '' || actualCost == null ? null : Number(actualCost),
       timeSpentMinutes: timeSpentMinutes === '' || timeSpentMinutes == null ? 0 : Number(timeSpentMinutes)
     });
+    if (ticket.screenId) {
+      await syncScreenWorkflowFromTickets(ticket.screenId);
+    }
     await logAudit(req, 'create', 'ticket', ticket.id, { title });
     // Send notification on ticket create
     const nConfig = await NotificationConfig.findOne();
@@ -2789,8 +2828,24 @@ app.patch('/tickets/:id', authenticateToken, async (req, res) => {
   try {
     const ticket = await Ticket.findByPk(req.params.id);
     if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
-    const { status, priority, assignedTo, description, timeSpentMinutes, checklist, title, category, actualCost } = req.body;
+    const { status, priority, assignedTo, description, timeSpentMinutes, checklist, title, category, actualCost, screenId, location, city } = req.body;
     const updates = {};
+    const previousScreenId = ticket.screenId;
+    let nextScreenId = previousScreenId;
+
+    if (screenId !== undefined) {
+      if (screenId === '' || screenId == null) {
+        updates.screenId = null;
+        nextScreenId = null;
+      } else {
+        const linkedScreen = await Screen.findByPk(screenId);
+        if (!linkedScreen) return res.status(400).json({ error: 'Tela vinculada inválida' });
+        updates.screenId = linkedScreen.id;
+        nextScreenId = linkedScreen.id;
+        if (location === undefined) updates.location = linkedScreen.address || linkedScreen.location || ticket.location || '';
+      }
+    }
+
     if (status) {
       updates.status = status;
       if (status === 'resolved') updates.resolvedAt = new Date();
@@ -2804,8 +2859,12 @@ app.patch('/tickets/:id', authenticateToken, async (req, res) => {
     if (checklist !== undefined) updates.checklist = checklist;
     if (title) updates.title = title;
     if (category) updates.category = category;
+    if (location !== undefined) updates.location = location;
+    if (city !== undefined) updates.city = city;
     if (status && ['resolved', 'closed'].includes(status)) updates.slaEscalatedAt = ticket.slaEscalatedAt || new Date();
     await ticket.update(updates);
+    const affectedScreenIds = [...new Set([previousScreenId, nextScreenId].filter(Boolean))];
+    await Promise.all(affectedScreenIds.map((screenIdValue) => syncScreenWorkflowFromTickets(screenIdValue)));
     await logAudit(req, 'update', 'ticket', ticket.id, updates);
     const json = ticket.toJSON();
     res.json({ ...json, ...calculateTicketCost(json) });
@@ -2816,7 +2875,11 @@ app.delete('/tickets/:id', authenticateToken, async (req, res) => {
   try {
     const ticket = await Ticket.findByPk(req.params.id);
     if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+    const previousScreenId = ticket.screenId;
     await ticket.destroy();
+    if (previousScreenId) {
+      await syncScreenWorkflowFromTickets(previousScreenId);
+    }
     await logAudit(req, 'delete', 'ticket', ticket.id, {});
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
