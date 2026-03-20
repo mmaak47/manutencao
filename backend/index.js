@@ -3891,6 +3891,25 @@ function extractCityFromAddress(address) {
   return normalizeCity(candidate);
 }
 
+function looksLikeStreetName(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  if (/\b(avenida|av\.?|rua|rodovia|rod\.?|estrada|alameda|travessa|tv\.?)\b/i.test(raw)) return true;
+  if (/\d/.test(raw)) return true;
+  if (/\bcep\b/i.test(raw)) return true;
+  return false;
+}
+
+function extractCityFromLocationName(locationName) {
+  const raw = String(locationName || '').trim();
+  if (!raw) return '';
+  const parts = raw.split('-').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return '';
+  const candidate = parts[parts.length - 1];
+  if (looksLikeStreetName(candidate)) return '';
+  return normalizeCity(candidate);
+}
+
 function isStaticLocation(locationName, locationType) {
   const text = `${locationName || ''} ${locationType || ''}`.toUpperCase();
   return text.includes('FRONTLIGHT') || text.includes('BACKLIGHT');
@@ -3901,8 +3920,12 @@ function normalizeCheckinLocations(locations) {
   for (const loc of (Array.isArray(locations) ? locations : [])) {
     const locationName = String(loc?.locationName || '').trim();
     const locationType = normalizeLocationType(loc?.locationType);
-    const city = normalizeCity(String(loc?.city || '').trim());
     const address = String(loc?.address || '').trim();
+    let city = normalizeCity(String(loc?.city || '').trim());
+    if (!city || looksLikeStreetName(city)) {
+      city = extractCityFromAddress(address) || extractCityFromLocationName(locationName) || city;
+    }
+    if (looksLikeStreetName(city)) city = '';
     const operatingHours = String(loc?.operatingHours || '').trim();
     if (!locationName) continue;
     if (isStaticLocation(locationName, locationType)) continue;
@@ -4094,7 +4117,11 @@ async function executeCheckinSnapshotJob() {
       checkinSnapshotJob.currentLocation = locationName;
       checkinSnapshotJob.message = `Coletando ${checkinSnapshotJob.processedLocations + 1}/${grouped.size}: ${locationName}`;
       const address = String(primary?.address || '').trim();
-      const city = extractCityFromAddress(address);
+      let city = extractCityFromAddress(address);
+      if (!city || looksLikeStreetName(city)) {
+        city = extractCityFromLocationName(locationName) || city;
+      }
+      if (looksLikeStreetName(city)) city = '';
       const hoursSource = locScreens.find((s) => s.operatingHoursStart || s.operatingHoursEnd || s.operatingDays) || primary;
       const operatingHours = formatOperatingHours(hoursSource);
 
