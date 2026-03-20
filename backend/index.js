@@ -3857,8 +3857,26 @@ function normalizeLocationType(locationType) {
 }
 
 function normalizeCity(city) {
-  // Strip trailing state suffix like "/PR", "/SP", etc., and normalize whitespace
-  return String(city || '').trim().replace(/\s*\/\s*[A-Z]{2}$/i, '').trim();
+  // Strip trailing state suffix like "/PR", "/SP", etc., normalize whitespace,
+  // and canonicalize casing to avoid duplicates such as "LONDRINA" vs "Londrina".
+  const cleaned = String(city || '')
+    .trim()
+    .replace(/\s*\/\s*[A-Z]{2}$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return '';
+
+  const lowerWords = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+  return cleaned
+    .toLocaleLowerCase('pt-BR')
+    .split(' ')
+    .map((word, idx) => {
+      if (!word) return word;
+      if (idx > 0 && lowerWords.has(word)) return word;
+      return word.charAt(0).toLocaleUpperCase('pt-BR') + word.slice(1);
+    })
+    .join(' ');
 }
 
 function extractCityFromAddress(address) {
@@ -3889,7 +3907,7 @@ function normalizeCheckinLocations(locations) {
     if (!locationName) continue;
     if (isStaticLocation(locationName, locationType)) continue;
 
-    const locationKey = String(loc?.locationKey || normalizeLocationKey(locationName, locationType, city));
+    const locationKey = normalizeLocationKey(locationName, locationType, city);
     const clientsManual = loc?.clientsManual === true;
     const clients = clientsManual ? normalizeClientList(loc?.clients || []) : [];
 
